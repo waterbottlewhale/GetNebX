@@ -1,3 +1,243 @@
+import hashlib
+import binascii
+import argparse
+import json
+import time
+import os
+
+def calc_md5_challenge(client_challenge, lm_resp):
+    combined_challenge = client_challenge + lm_resp[0:16]
+    m = hashlib.md5()
+    m.update(binascii.unhexlify(combined_challenge))
+    return m.hexdigest()
+
+parser = argparse.ArgumentParser()
+parser.add_argument('--ntlmv1', help='NTLMv1 Hash in responder format', required=True)
+parser.add_argument('--hashcat', help='hashcat path, eg: ~/git/hashcat', required=False)
+parser.add_argument('--hcutils', help='hashcat-utils path, eg: ~/git/hashcat-utils', required=False)
+parser.add_argument('--json', help='if this is set to anything it will output json, eg: --json 1', required=False)
+parser.add_argument('--output', help='output to a file, specify filename', required=False)
+args = parser.parse_args()
+
+# Splitting the NTLMv1 hash field
+hashsplit = args.ntlmv1.split(':')
+challenge = hashsplit[5]
+lmresp = hashsplit[3]
+ntresp = hashsplit[4]
+ct3 = ntresp[32:48]
+data = {
+    'ntlmv1': args.ntlmv1,
+    'user': hashsplit[0],
+    'domain': hashsplit[2],
+    'challenge': challenge,
+    'lmresp': lmresp,
+    'ntresp': ntresp,
+    'ct3': ct3
+}
+
+# Processing for different LM Response Conditions
+if lmresp[20:48] != "0000000000000000000000000000":
+    ct1 = ntresp[0:16]
+    ct2 = ntresp[16:32]
+    ct3 = ntresp[32:48]
+    output_data = {
+        'hostname': hashsplit[2],
+        'username': hashsplit[0],
+        'challenge': challenge,
+        'lm_response': lmresp,
+        'nt_response': ntresp,
+        'ct1': ct1,
+        'ct2': ct2,
+        'ct3': ct3
+    }
+
+    if args.json is None:
+        print("Hash Split Data: ", str(hashsplit))
+        print("Hostname: ", hashsplit[2])
+        print("Username: ", hashsplit[0])
+        print("Challenge: ", challenge)
+        print("LM Response: ", lmresp)
+        print("NT Response: ", ntresp)
+        print("CT1: ", ct1)
+        print("CT2: ", ct2)
+        print("CT3: ", ct3)
+        print("To Calculate Final NTLM Hash:")
+        if args.hcutils:
+            print(f"{args.hcutils}/ct3_to_ntlm.bin {ct3} {challenge}")
+        else:
+            print(f"./ct3_to_ntlm.bin {ct3} {challenge}")
+        print("To crack with hashcat, use this file:")
+        print(f"echo \"{ct1}:{challenge}\" >> 14000.hash")
+        print(f"echo \"{ct2}:{challenge}\" >> 14000.hash")
+        print(f"hashcat -m 14000 -a 3 -1 {args.hashcat}/charsets/DES_full.charset --hex-charset 14000.hash ?1?1?1?1?1?1?1?1")
+
+if lmresp[20:48] == "0000000000000000000000000000":
+    clientchallenge = hashsplit[5]
+    md5hash = calc_md5_challenge(clientchallenge, lmresp)
+    srvchallenge = md5hash[0:16]
+    data['srvchallenge'] = srvchallenge
+    ct1 = ntresp[0:16]
+    ct2 = ntresp[16:32]
+
+    if args.json is None:
+        print(f"Hash response is ESS, consider using responder with --lm or --disable-ess with a static challenge of 1122334455667788")
+        print(f"Client Challenge: {clientchallenge}")
+        print(f"Combined Challenge: {clientchallenge + lmresp[0:16]}")
+        print(f"MD5 Hash of Combined Challenge: {md5hash}")
+        print(f"Server Challenge: {srvchallenge}")
+        print("To calculate final NTLM hash use:")
+        if args.hcutils:
+            print(f"{args.hcutils}/ct3_to_ntlm.bin {ct3} {clientchallenge} {lmresp}")
+        else:
+            print(f"./ct3_to_ntlm.bin {ct3} {clientchallenge} {lmresp}")
+        print("To crack with hashcat, use this file:")
+        print(f"echo \"{ct1}:{srvchallenge}\" >> 14000.hash")
+        print(f"echo \"{ct2}:{srvchallenge}\" >> 14000.hash")
+        print(f"hashcat -m 14000 -a 3 -1 {args.hashcat}/charsets/DES_full.charset --hex-charset 14000.hash ?1?1?1?1?1?1?1?1")
+
+if args.json is not None:
+    if lmresp[20:48] != "0000000000000000000000000000":
+        if args.hcutils:
+            data['ct3_crack'] = f"{args.hcutils}/ct3_to_ntlm.bin {ct3} {challenge}"
+        else:
+            data['ct3_crack'] = f"ct3_to_ntlm.bin {ct3} {challenge}"
+        data['hash1'] = f"{ct1}:{challenge}"
+        data['hash2'] = f"{ct2}:{challenge}"
+
+    if lmresp[20:48] == "0000000000000000000000000000":
+        if args.hcutils:
+            data['ct3_crack'] = f"{args.hcutils}/ct3_to_ntlm.bin {ct3} {clientchallenge} {lmresp}"
+        else:
+            data['ct3_crack'] = f"ct3_to_ntlm.bin {ct3} {clientchallenge} {lmresp}"
+        data['hash1'] = f"{ct1}:{srvchallenge}"
+        data['hash2'] = f"{ct2}:{srvchallenge}"
+
+    json_data = json.dumps(data)
+    if args.output:
+        with open(args.output, 'w') as json_file:
+            json.dump(data, json_file, indent=4)
+    else:
+        print(json_data)
+import hashlib
+import binascii
+import argparse
+import json
+import time
+import os
+
+def calc_md5_challenge(client_challenge, lm_resp):
+    combined_challenge = client_challenge + lm_resp[0:16]
+    m = hashlib.md5()
+    m.update(binascii.unhexlify(combined_challenge))
+    return m.hexdigest()
+
+parser = argparse.ArgumentParser()
+parser.add_argument('--ntlmv1', help='NTLMv1 Hash in responder format', required=True)
+parser.add_argument('--hashcat', help='hashcat path, eg: ~/git/hashcat', required=False)
+parser.add_argument('--hcutils', help='hashcat-utils path, eg: ~/git/hashcat-utils', required=False)
+parser.add_argument('--json', help='if this is set to anything it will output json, eg: --json 1', required=False)
+parser.add_argument('--output', help='output to a file, specify filename', required=False)
+args = parser.parse_args()
+
+# Splitting the NTLMv1 hash field
+hashsplit = args.ntlmv1.split(':')
+challenge = hashsplit[5]
+lmresp = hashsplit[3]
+ntresp = hashsplit[4]
+ct3 = ntresp[32:48]
+data = {
+    'ntlmv1': args.ntlmv1,
+    'user': hashsplit[0],
+    'domain': hashsplit[2],
+    'challenge': challenge,
+    'lmresp': lmresp,
+    'ntresp': ntresp,
+    'ct3': ct3
+}
+
+# Processing for different LM Response Conditions
+if lmresp[20:48] != "0000000000000000000000000000":
+    ct1 = ntresp[0:16]
+    ct2 = ntresp[16:32]
+    ct3 = ntresp[32:48]
+    output_data = {
+        'hostname': hashsplit[2],
+        'username': hashsplit[0],
+        'challenge': challenge,
+        'lm_response': lmresp,
+        'nt_response': ntresp,
+        'ct1': ct1,
+        'ct2': ct2,
+        'ct3': ct3
+    }
+
+    if args.json is None:
+        print("Hash Split Data: ", str(hashsplit))
+        print("Hostname: ", hashsplit[2])
+        print("Username: ", hashsplit[0])
+        print("Challenge: ", challenge)
+        print("LM Response: ", lmresp)
+        print("NT Response: ", ntresp)
+        print("CT1: ", ct1)
+        print("CT2: ", ct2)
+        print("CT3: ", ct3)
+        print("To Calculate Final NTLM Hash:")
+        if args.hcutils:
+            print(f"{args.hcutils}/ct3_to_ntlm.bin {ct3} {challenge}")
+        else:
+            print(f"./ct3_to_ntlm.bin {ct3} {challenge}")
+        print("To crack with hashcat, use this file:")
+        print(f"echo \"{ct1}:{challenge}\" >> 14000.hash")
+        print(f"echo \"{ct2}:{challenge}\" >> 14000.hash")
+        print(f"hashcat -m 14000 -a 3 -1 {args.hashcat}/charsets/DES_full.charset --hex-charset 14000.hash ?1?1?1?1?1?1?1?1")
+
+if lmresp[20:48] == "0000000000000000000000000000":
+    clientchallenge = hashsplit[5]
+    md5hash = calc_md5_challenge(clientchallenge, lmresp)
+    srvchallenge = md5hash[0:16]
+    data['srvchallenge'] = srvchallenge
+    ct1 = ntresp[0:16]
+    ct2 = ntresp[16:32]
+
+    if args.json is None:
+        print(f"Hash response is ESS, consider using responder with --lm or --disable-ess with a static challenge of 1122334455667788")
+        print(f"Client Challenge: {clientchallenge}")
+        print(f"Combined Challenge: {clientchallenge + lmresp[0:16]}")
+        print(f"MD5 Hash of Combined Challenge: {md5hash}")
+        print(f"Server Challenge: {srvchallenge}")
+        print("To calculate final NTLM hash use:")
+        if args.hcutils:
+            print(f"{args.hcutils}/ct3_to_ntlm.bin {ct3} {clientchallenge} {lmresp}")
+        else:
+            print(f"./ct3_to_ntlm.bin {ct3} {clientchallenge} {lmresp}")
+        print("To crack with hashcat, use this file:")
+        print(f"echo \"{ct1}:{srvchallenge}\" >> 14000.hash")
+        print(f"echo \"{ct2}:{srvchallenge}\" >> 14000.hash")
+        print(f"hashcat -m 14000 -a 3 -1 {args.hashcat}/charsets/DES_full.charset --hex-charset 14000.hash ?1?1?1?1?1?1?1?1")
+
+if args.json is not None:
+    if lmresp[20:48] != "0000000000000000000000000000":
+        if args.hcutils:
+            data['ct3_crack'] = f"{args.hcutils}/ct3_to_ntlm.bin {ct3} {challenge}"
+        else:
+            data['ct3_crack'] = f"ct3_to_ntlm.bin {ct3} {challenge}"
+        data['hash1'] = f"{ct1}:{challenge}"
+        data['hash2'] = f"{ct2}:{challenge}"
+
+    if lmresp[20:48] == "0000000000000000000000000000":
+        if args.hcutils:
+            data['ct3_crack'] = f"{args.hcutils}/ct3_to_ntlm.bin {ct3} {clientchallenge} {lmresp}"
+        else:
+            data['ct3_crack'] = f"ct3_to_ntlm.bin {ct3} {clientchallenge} {lmresp}"
+        data['hash1'] = f"{ct1}:{srvchallenge}"
+        data['hash2'] = f"{ct2}:{srvchallenge}"
+
+    json_data = json.dumps(data)
+    if args.output:
+        with open(args.output, 'w') as json_file:
+            json.dump(data, json_file, indent=4)
+    else:
+        print(json_data)
 import random
 import string
 import itertools
@@ -668,3 +908,7803 @@ if args.json != None:
     # process data
     json_data = json.dumps(data)
     print(json_data)
+import hashlib
+import binascii
+import argparse
+import json
+import time
+import os
+
+def calc_md5_challenge(client_challenge, lm_resp):
+    combined_challenge = client_challenge + lm_resp[0:16]
+    m = hashlib.md5()
+    m.update(binascii.unhexlify(combined_challenge))
+    return m.hexdigest()
+
+parser = argparse.ArgumentParser()
+parser.add_argument('--ntlmv1', help='NTLMv1 Hash in responder format', required=True)
+parser.add_argument('--hashcat', help='hashcat path, eg: ~/git/hashcat', required=False)
+parser.add_argument('--hcutils', help='hashcat-utils path, eg: ~/git/hashcat-utils', required=False)
+parser.add_argument('--json', help='if this is set to anything it will output json, eg: --json 1', required=False)
+parser.add_argument('--output', help='output to a file, specify filename', required=False)
+args = parser.parse_args()
+
+# Splitting the NTLMv1 hash field
+hashsplit = args.ntlmv1.split(':')
+challenge = hashsplit[5]
+lmresp = hashsplit[3]
+ntresp = hashsplit[4]
+ct3 = ntresp[32:48]
+data = {
+    'ntlmv1': args.ntlmv1,
+    'user': hashsplit[0],
+    'domain': hashsplit[2],
+    'challenge': challenge,
+    'lmresp': lmresp,
+    'ntresp': ntresp,
+    'ct3': ct3
+}
+
+# Processing for different LM Response Conditions
+if lmresp[20:48] != "0000000000000000000000000000":
+    ct1 = ntresp[0:16]
+    ct2 = ntresp[16:32]
+    ct3 = ntresp[32:48]
+    output_data = {
+        'hostname': hashsplit[2],
+        'username': hashsplit[0],
+        'challenge': challenge,
+        'lm_response': lmresp,
+        'nt_response': ntresp,
+        'ct1': ct1,
+        'ct2': ct2,
+        'ct3': ct3
+    }
+
+    if args.json is None:
+        print("Hash Split Data: ", str(hashsplit))
+        print("Hostname: ", hashsplit[2])
+        print("Username: ", hashsplit[0])
+        print("Challenge: ", challenge)
+        print("LM Response: ", lmresp)
+        print("NT Response: ", ntresp)
+        print("CT1: ", ct1)
+        print("CT2: ", ct2)
+        print("CT3: ", ct3)
+        print("To Calculate Final NTLM Hash:")
+        if args.hcutils:
+            print(f"{args.hcutils}/ct3_to_ntlm.bin {ct3} {challenge}")
+        else:
+            print(f"./ct3_to_ntlm.bin {ct3} {challenge}")
+        print("To crack with hashcat, use this file:")
+        print(f"echo \"{ct1}:{challenge}\" >> 14000.hash")
+        print(f"echo \"{ct2}:{challenge}\" >> 14000.hash")
+        print(f"hashcat -m 14000 -a 3 -1 {args.hashcat}/charsets/DES_full.charset --hex-charset 14000.hash ?1?1?1?1?1?1?1?1")
+
+if lmresp[20:48] == "0000000000000000000000000000":
+    clientchallenge = hashsplit[5]
+    md5hash = calc_md5_challenge(clientchallenge, lmresp)
+    srvchallenge = md5hash[0:16]
+    data['srvchallenge'] = srvchallenge
+    ct1 = ntresp[0:16]
+    ct2 = ntresp[16:32]
+
+    if args.json is None:
+        print(f"Hash response is ESS, consider using responder with --lm or --disable-ess with a static challenge of 1122334455667788")
+        print(f"Client Challenge: {clientchallenge}")
+        print(f"Combined Challenge: {clientchallenge + lmresp[0:16]}")
+        print(f"MD5 Hash of Combined Challenge: {md5hash}")
+        print(f"Server Challenge: {srvchallenge}")
+        print("To calculate final NTLM hash use:")
+        if args.hcutils:
+            print(f"{args.hcutils}/ct3_to_ntlm.bin {ct3} {clientchallenge} {lmresp}")
+        else:
+            print(f"./ct3_to_ntlm.bin {ct3} {clientchallenge} {lmresp}")
+        print("To crack with hashcat, use this file:")
+        print(f"echo \"{ct1}:{srvchallenge}\" >> 14000.hash")
+        print(f"echo \"{ct2}:{srvchallenge}\" >> 14000.hash")
+        print(f"hashcat -m 14000 -a 3 -1 {args.hashcat}/charsets/DES_full.charset --hex-charset 14000.hash ?1?1?1?1?1?1?1?1")
+
+if args.json is not None:
+    if lmresp[20:48] != "0000000000000000000000000000":
+        if args.hcutils:
+            data['ct3_crack'] = f"{args.hcutils}/ct3_to_ntlm.bin {ct3} {challenge}"
+        else:
+            data['ct3_crack'] = f"ct3_to_ntlm.bin {ct3} {challenge}"
+        data['hash1'] = f"{ct1}:{challenge}"
+        data['hash2'] = f"{ct2}:{challenge}"
+
+    if lmresp[20:48] == "0000000000000000000000000000":
+        if args.hcutils:
+            data['ct3_crack'] = f"{args.hcutils}/ct3_to_ntlm.bin {ct3} {clientchallenge} {lmresp}"
+        else:
+            data['ct3_crack'] = f"ct3_to_ntlm.bin {ct3} {clientchallenge} {lmresp}"
+        data['hash1'] = f"{ct1}:{srvchallenge}"
+        data['hash2'] = f"{ct2}:{srvchallenge}"
+
+    json_data = json.dumps(data)
+    if args.output:
+        with open(args.output, 'w') as json_file:
+            json.dump(data, json_file, indent=4)
+    else:
+        print(json_data)
+import hashlib
+import binascii
+import argparse
+import json
+import time
+import os
+
+def calc_md5_challenge(client_challenge, lm_resp):
+    combined_challenge = client_challenge + lm_resp[0:16]
+    m = hashlib.md5()
+    m.update(binascii.unhexlify(combined_challenge))
+    return m.hexdigest()
+
+parser = argparse.ArgumentParser()
+parser.add_argument('--ntlmv1', help='NTLMv1 Hash in responder format', required=True)
+parser.add_argument('--hashcat', help='hashcat path, eg: ~/git/hashcat', required=False)
+parser.add_argument('--hcutils', help='hashcat-utils path, eg: ~/git/hashcat-utils', required=False)
+parser.add_argument('--json', help='if this is set to anything it will output json, eg: --json 1', required=False)
+parser.add_argument('--output', help='output to a file, specify filename', required=False)
+args = parser.parse_args()
+
+# Splitting the NTLMv1 hash field
+hashsplit = args.ntlmv1.split(':')
+challenge = hashsplit[5]
+lmresp = hashsplit[3]
+ntresp = hashsplit[4]
+ct3 = ntresp[32:48]
+data = {
+    'ntlmv1': args.ntlmv1,
+    'user': hashsplit[0],
+    'domain': hashsplit[2],
+    'challenge': challenge,
+    'lmresp': lmresp,
+    'ntresp': ntresp,
+    'ct3': ct3
+}
+
+# Processing for different LM Response Conditions
+if lmresp[20:48] != "0000000000000000000000000000":
+    ct1 = ntresp[0:16]
+    ct2 = ntresp[16:32]
+    ct3 = ntresp[32:48]
+    output_data = {
+        'hostname': hashsplit[2],
+        'username': hashsplit[0],
+        'challenge': challenge,
+        'lm_response': lmresp,
+        'nt_response': ntresp,
+        'ct1': ct1,
+        'ct2': ct2,
+        'ct3': ct3
+    }
+
+    if args.json is None:
+        print("Hash Split Data: ", str(hashsplit))
+        print("Hostname: ", hashsplit[2])
+        print("Username: ", hashsplit[0])
+        print("Challenge: ", challenge)
+        print("LM Response: ", lmresp)
+        print("NT Response: ", ntresp)
+        print("CT1: ", ct1)
+        print("CT2: ", ct2)
+        print("CT3: ", ct3)
+        print("To Calculate Final NTLM Hash:")
+        if args.hcutils:
+            print(f"{args.hcutils}/ct3_to_ntlm.bin {ct3} {challenge}")
+        else:
+            print(f"./ct3_to_ntlm.bin {ct3} {challenge}")
+        print("To crack with hashcat, use this file:")
+        print(f"echo \"{ct1}:{challenge}\" >> 14000.hash")
+        print(f"echo \"{ct2}:{challenge}\" >> 14000.hash")
+        print(f"hashcat -m 14000 -a 3 -1 {args.hashcat}/charsets/DES_full.charset --hex-charset 14000.hash ?1?1?1?1?1?1?1?1")
+
+if lmresp[20:48] == "0000000000000000000000000000":
+    clientchallenge = hashsplit[5]
+    md5hash = calc_md5_challenge(clientchallenge, lmresp)
+    srvchallenge = md5hash[0:16]
+    data['srvchallenge'] = srvchallenge
+    ct1 = ntresp[0:16]
+    ct2 = ntresp[16:32]
+
+    if args.json is None:
+        print(f"Hash response is ESS, consider using responder with --lm or --disable-ess with a static challenge of 1122334455667788")
+        print(f"Client Challenge: {clientchallenge}")
+        print(f"Combined Challenge: {clientchallenge + lmresp[0:16]}")
+        print(f"MD5 Hash of Combined Challenge: {md5hash}")
+        print(f"Server Challenge: {srvchallenge}")
+        print("To calculate final NTLM hash use:")
+        if args.hcutils:
+            print(f"{args.hcutils}/ct3_to_ntlm.bin {ct3} {clientchallenge} {lmresp}")
+        else:
+            print(f"./ct3_to_ntlm.bin {ct3} {clientchallenge} {lmresp}")
+        print("To crack with hashcat, use this file:")
+        print(f"echo \"{ct1}:{srvchallenge}\" >> 14000.hash")
+        print(f"echo \"{ct2}:{srvchallenge}\" >> 14000.hash")
+        print(f"hashcat -m 14000 -a 3 -1 {args.hashcat}/charsets/DES_full.charset --hex-charset 14000.hash ?1?1?1?1?1?1?1?1")
+
+if args.json is not None:
+    if lmresp[20:48] != "0000000000000000000000000000":
+        if args.hcutils:
+            data['ct3_crack'] = f"{args.hcutils}/ct3_to_ntlm.bin {ct3} {challenge}"
+        else:
+            data['ct3_crack'] = f"ct3_to_ntlm.bin {ct3} {challenge}"
+        data['hash1'] = f"{ct1}:{challenge}"
+        data['hash2'] = f"{ct2}:{challenge}"
+
+    if lmresp[20:48] == "0000000000000000000000000000":
+        if args.hcutils:
+            data['ct3_crack'] = f"{args.hcutils}/ct3_to_ntlm.bin {ct3} {clientchallenge} {lmresp}"
+        else:
+            data['ct3_crack'] = f"ct3_to_ntlm.bin {ct3} {clientchallenge} {lmresp}"
+        data['hash1'] = f"{ct1}:{srvchallenge}"
+        data['hash2'] = f"{ct2}:{srvchallenge}"
+
+    json_data = json.dumps(data)
+    if args.output:
+        with open(args.output, 'w') as json_file:
+            json.dump(data, json_file, indent=4)
+    else:
+        print(json_data)
+import hashlib
+import binascii
+import argparse
+import json
+import time
+import os
+
+def calc_md5_challenge(client_challenge, lm_resp):
+    combined_challenge = client_challenge + lm_resp[0:16]
+    m = hashlib.md5()
+    m.update(binascii.unhexlify(combined_challenge))
+    return m.hexdigest()
+
+parser = argparse.ArgumentParser()
+parser.add_argument('--ntlmv1', help='NTLMv1 Hash in responder format', required=True)
+parser.add_argument('--hashcat', help='hashcat path, eg: ~/git/hashcat', required=False)
+parser.add_argument('--hcutils', help='hashcat-utils path, eg: ~/git/hashcat-utils', required=False)
+parser.add_argument('--json', help='if this is set to anything it will output json, eg: --json 1', required=False)
+parser.add_argument('--output', help='output to a file, specify filename', required=False)
+args = parser.parse_args()
+
+# Splitting the NTLMv1 hash field
+hashsplit = args.ntlmv1.split(':')
+challenge = hashsplit[5]
+lmresp = hashsplit[3]
+ntresp = hashsplit[4]
+ct3 = ntresp[32:48]
+data = {
+    'ntlmv1': args.ntlmv1,
+    'user': hashsplit[0],
+    'domain': hashsplit[2],
+    'challenge': challenge,
+    'lmresp': lmresp,
+    'ntresp': ntresp,
+    'ct3': ct3
+}
+
+# Processing for different LM Response Conditions
+if lmresp[20:48] != "0000000000000000000000000000":
+    ct1 = ntresp[0:16]
+    ct2 = ntresp[16:32]
+    ct3 = ntresp[32:48]
+    output_data = {
+        'hostname': hashsplit[2],
+        'username': hashsplit[0],
+        'challenge': challenge,
+        'lm_response': lmresp,
+        'nt_response': ntresp,
+        'ct1': ct1,
+        'ct2': ct2,
+        'ct3': ct3
+    }
+
+    if args.json is None:
+        print("Hash Split Data: ", str(hashsplit))
+        print("Hostname: ", hashsplit[2])
+        print("Username: ", hashsplit[0])
+        print("Challenge: ", challenge)
+        print("LM Response: ", lmresp)
+        print("NT Response: ", ntresp)
+        print("CT1: ", ct1)
+        print("CT2: ", ct2)
+        print("CT3: ", ct3)
+        print("To Calculate Final NTLM Hash:")
+        if args.hcutils:
+            print(f"{args.hcutils}/ct3_to_ntlm.bin {ct3} {challenge}")
+        else:
+            print(f"./ct3_to_ntlm.bin {ct3} {challenge}")
+        print("To crack with hashcat, use this file:")
+        print(f"echo \"{ct1}:{challenge}\" >> 14000.hash")
+        print(f"echo \"{ct2}:{challenge}\" >> 14000.hash")
+        print(f"hashcat -m 14000 -a 3 -1 {args.hashcat}/charsets/DES_full.charset --hex-charset 14000.hash ?1?1?1?1?1?1?1?1")
+
+if lmresp[20:48] == "0000000000000000000000000000":
+    clientchallenge = hashsplit[5]
+    md5hash = calc_md5_challenge(clientchallenge, lmresp)
+    srvchallenge = md5hash[0:16]
+    data['srvchallenge'] = srvchallenge
+    ct1 = ntresp[0:16]
+    ct2 = ntresp[16:32]
+
+    if args.json is None:
+        print(f"Hash response is ESS, consider using responder with --lm or --disable-ess with a static challenge of 1122334455667788")
+        print(f"Client Challenge: {clientchallenge}")
+        print(f"Combined Challenge: {clientchallenge + lmresp[0:16]}")
+        print(f"MD5 Hash of Combined Challenge: {md5hash}")
+        print(f"Server Challenge: {srvchallenge}")
+        print("To calculate final NTLM hash use:")
+        if args.hcutils:
+            print(f"{args.hcutils}/ct3_to_ntlm.bin {ct3} {clientchallenge} {lmresp}")
+        else:
+            print(f"./ct3_to_ntlm.bin {ct3} {clientchallenge} {lmresp}")
+        print("To crack with hashcat, use this file:")
+        print(f"echo \"{ct1}:{srvchallenge}\" >> 14000.hash")
+        print(f"echo \"{ct2}:{srvchallenge}\" >> 14000.hash")
+        print(f"hashcat -m 14000 -a 3 -1 {args.hashcat}/charsets/DES_full.charset --hex-charset 14000.hash ?1?1?1?1?1?1?1?1")
+
+if args.json is not None:
+    if lmresp[20:48] != "0000000000000000000000000000":
+        if args.hcutils:
+            data['ct3_crack'] = f"{args.hcutils}/ct3_to_ntlm.bin {ct3} {challenge}"
+        else:
+            data['ct3_crack'] = f"ct3_to_ntlm.bin {ct3} {challenge}"
+        data['hash1'] = f"{ct1}:{challenge}"
+        data['hash2'] = f"{ct2}:{challenge}"
+
+    if lmresp[20:48] == "0000000000000000000000000000":
+        if args.hcutils:
+            data['ct3_crack'] = f"{args.hcutils}/ct3_to_ntlm.bin {ct3} {clientchallenge} {lmresp}"
+        else:
+            data['ct3_crack'] = f"ct3_to_ntlm.bin {ct3} {clientchallenge} {lmresp}"
+        data['hash1'] = f"{ct1}:{srvchallenge}"
+        data['hash2'] = f"{ct2}:{srvchallenge}"
+
+    json_data = json.dumps(data)
+    if args.output:
+        with open(args.output, 'w') as json_file:
+            json.dump(data, json_file, indent=4)
+    else:
+        print(json_data)
+import hashlib
+import binascii
+import argparse
+import json
+import time
+import os
+
+def calc_md5_challenge(client_challenge, lm_resp):
+    combined_challenge = client_challenge + lm_resp[0:16]
+    m = hashlib.md5()
+    m.update(binascii.unhexlify(combined_challenge))
+    return m.hexdigest()
+
+parser = argparse.ArgumentParser()
+parser.add_argument('--ntlmv1', help='NTLMv1 Hash in responder format', required=True)
+parser.add_argument('--hashcat', help='hashcat path, eg: ~/git/hashcat', required=False)
+parser.add_argument('--hcutils', help='hashcat-utils path, eg: ~/git/hashcat-utils', required=False)
+parser.add_argument('--json', help='if this is set to anything it will output json, eg: --json 1', required=False)
+parser.add_argument('--output', help='output to a file, specify filename', required=False)
+args = parser.parse_args()
+
+# Splitting the NTLMv1 hash field
+hashsplit = args.ntlmv1.split(':')
+challenge = hashsplit[5]
+lmresp = hashsplit[3]
+ntresp = hashsplit[4]
+ct3 = ntresp[32:48]
+data = {
+    'ntlmv1': args.ntlmv1,
+    'user': hashsplit[0],
+    'domain': hashsplit[2],
+    'challenge': challenge,
+    'lmresp': lmresp,
+    'ntresp': ntresp,
+    'ct3': ct3
+}
+
+# Processing for different LM Response Conditions
+if lmresp[20:48] != "0000000000000000000000000000":
+    ct1 = ntresp[0:16]
+    ct2 = ntresp[16:32]
+    ct3 = ntresp[32:48]
+    output_data = {
+        'hostname': hashsplit[2],
+        'username': hashsplit[0],
+        'challenge': challenge,
+        'lm_response': lmresp,
+        'nt_response': ntresp,
+        'ct1': ct1,
+        'ct2': ct2,
+        'ct3': ct3
+    }
+
+    if args.json is None:
+        print("Hash Split Data: ", str(hashsplit))
+        print("Hostname: ", hashsplit[2])
+        print("Username: ", hashsplit[0])
+        print("Challenge: ", challenge)
+        print("LM Response: ", lmresp)
+        print("NT Response: ", ntresp)
+        print("CT1: ", ct1)
+        print("CT2: ", ct2)
+        print("CT3: ", ct3)
+        print("To Calculate Final NTLM Hash:")
+        if args.hcutils:
+            print(f"{args.hcutils}/ct3_to_ntlm.bin {ct3} {challenge}")
+        else:
+            print(f"./ct3_to_ntlm.bin {ct3} {challenge}")
+        print("To crack with hashcat, use this file:")
+        print(f"echo \"{ct1}:{challenge}\" >> 14000.hash")
+        print(f"echo \"{ct2}:{challenge}\" >> 14000.hash")
+        print(f"hashcat -m 14000 -a 3 -1 {args.hashcat}/charsets/DES_full.charset --hex-charset 14000.hash ?1?1?1?1?1?1?1?1")
+
+if lmresp[20:48] == "0000000000000000000000000000":
+    clientchallenge = hashsplit[5]
+    md5hash = calc_md5_challenge(clientchallenge, lmresp)
+    srvchallenge = md5hash[0:16]
+    data['srvchallenge'] = srvchallenge
+    ct1 = ntresp[0:16]
+    ct2 = ntresp[16:32]
+
+    if args.json is None:
+        print(f"Hash response is ESS, consider using responder with --lm or --disable-ess with a static challenge of 1122334455667788")
+        print(f"Client Challenge: {clientchallenge}")
+        print(f"Combined Challenge: {clientchallenge + lmresp[0:16]}")
+        print(f"MD5 Hash of Combined Challenge: {md5hash}")
+        print(f"Server Challenge: {srvchallenge}")
+        print("To calculate final NTLM hash use:")
+        if args.hcutils:
+            print(f"{args.hcutils}/ct3_to_ntlm.bin {ct3} {clientchallenge} {lmresp}")
+        else:
+            print(f"./ct3_to_ntlm.bin {ct3} {clientchallenge} {lmresp}")
+        print("To crack with hashcat, use this file:")
+        print(f"echo \"{ct1}:{srvchallenge}\" >> 14000.hash")
+        print(f"echo \"{ct2}:{srvchallenge}\" >> 14000.hash")
+        print(f"hashcat -m 14000 -a 3 -1 {args.hashcat}/charsets/DES_full.charset --hex-charset 14000.hash ?1?1?1?1?1?1?1?1")
+
+if args.json is not None:
+    if lmresp[20:48] != "0000000000000000000000000000":
+        if args.hcutils:
+            data['ct3_crack'] = f"{args.hcutils}/ct3_to_ntlm.bin {ct3} {challenge}"
+        else:
+            data['ct3_crack'] = f"ct3_to_ntlm.bin {ct3} {challenge}"
+        data['hash1'] = f"{ct1}:{challenge}"
+        data['hash2'] = f"{ct2}:{challenge}"
+
+    if lmresp[20:48] == "0000000000000000000000000000":
+        if args.hcutils:
+            data['ct3_crack'] = f"{args.hcutils}/ct3_to_ntlm.bin {ct3} {clientchallenge} {lmresp}"
+        else:
+            data['ct3_crack'] = f"ct3_to_ntlm.bin {ct3} {clientchallenge} {lmresp}"
+        data['hash1'] = f"{ct1}:{srvchallenge}"
+        data['hash2'] = f"{ct2}:{srvchallenge}"
+
+    json_data = json.dumps(data)
+    if args.output:
+        with open(args.output, 'w') as json_file:
+            json.dump(data, json_file, indent=4)
+    else:
+        print(json_data)
+import hashlib
+import binascii
+import argparse
+import json
+import time
+import os
+
+def calc_md5_challenge(client_challenge, lm_resp):
+    combined_challenge = client_challenge + lm_resp[0:16]
+    m = hashlib.md5()
+    m.update(binascii.unhexlify(combined_challenge))
+    return m.hexdigest()
+
+parser = argparse.ArgumentParser()
+parser.add_argument('--ntlmv1', help='NTLMv1 Hash in responder format', required=True)
+parser.add_argument('--hashcat', help='hashcat path, eg: ~/git/hashcat', required=False)
+parser.add_argument('--hcutils', help='hashcat-utils path, eg: ~/git/hashcat-utils', required=False)
+parser.add_argument('--json', help='if this is set to anything it will output json, eg: --json 1', required=False)
+parser.add_argument('--output', help='output to a file, specify filename', required=False)
+args = parser.parse_args()
+
+# Splitting the NTLMv1 hash field
+hashsplit = args.ntlmv1.split(':')
+challenge = hashsplit[5]
+lmresp = hashsplit[3]
+ntresp = hashsplit[4]
+ct3 = ntresp[32:48]
+data = {
+    'ntlmv1': args.ntlmv1,
+    'user': hashsplit[0],
+    'domain': hashsplit[2],
+    'challenge': challenge,
+    'lmresp': lmresp,
+    'ntresp': ntresp,
+    'ct3': ct3
+}
+
+# Processing for different LM Response Conditions
+if lmresp[20:48] != "0000000000000000000000000000":
+    ct1 = ntresp[0:16]
+    ct2 = ntresp[16:32]
+    ct3 = ntresp[32:48]
+    output_data = {
+        'hostname': hashsplit[2],
+        'username': hashsplit[0],
+        'challenge': challenge,
+        'lm_response': lmresp,
+        'nt_response': ntresp,
+        'ct1': ct1,
+        'ct2': ct2,
+        'ct3': ct3
+    }
+
+    if args.json is None:
+        print("Hash Split Data: ", str(hashsplit))
+        print("Hostname: ", hashsplit[2])
+        print("Username: ", hashsplit[0])
+        print("Challenge: ", challenge)
+        print("LM Response: ", lmresp)
+        print("NT Response: ", ntresp)
+        print("CT1: ", ct1)
+        print("CT2: ", ct2)
+        print("CT3: ", ct3)
+        print("To Calculate Final NTLM Hash:")
+        if args.hcutils:
+            print(f"{args.hcutils}/ct3_to_ntlm.bin {ct3} {challenge}")
+        else:
+            print(f"./ct3_to_ntlm.bin {ct3} {challenge}")
+        print("To crack with hashcat, use this file:")
+        print(f"echo \"{ct1}:{challenge}\" >> 14000.hash")
+        print(f"echo \"{ct2}:{challenge}\" >> 14000.hash")
+        print(f"hashcat -m 14000 -a 3 -1 {args.hashcat}/charsets/DES_full.charset --hex-charset 14000.hash ?1?1?1?1?1?1?1?1")
+
+if lmresp[20:48] == "0000000000000000000000000000":
+    clientchallenge = hashsplit[5]
+    md5hash = calc_md5_challenge(clientchallenge, lmresp)
+    srvchallenge = md5hash[0:16]
+    data['srvchallenge'] = srvchallenge
+    ct1 = ntresp[0:16]
+    ct2 = ntresp[16:32]
+
+    if args.json is None:
+        print(f"Hash response is ESS, consider using responder with --lm or --disable-ess with a static challenge of 1122334455667788")
+        print(f"Client Challenge: {clientchallenge}")
+        print(f"Combined Challenge: {clientchallenge + lmresp[0:16]}")
+        print(f"MD5 Hash of Combined Challenge: {md5hash}")
+        print(f"Server Challenge: {srvchallenge}")
+        print("To calculate final NTLM hash use:")
+        if args.hcutils:
+            print(f"{args.hcutils}/ct3_to_ntlm.bin {ct3} {clientchallenge} {lmresp}")
+        else:
+            print(f"./ct3_to_ntlm.bin {ct3} {clientchallenge} {lmresp}")
+        print("To crack with hashcat, use this file:")
+        print(f"echo \"{ct1}:{srvchallenge}\" >> 14000.hash")
+        print(f"echo \"{ct2}:{srvchallenge}\" >> 14000.hash")
+        print(f"hashcat -m 14000 -a 3 -1 {args.hashcat}/charsets/DES_full.charset --hex-charset 14000.hash ?1?1?1?1?1?1?1?1")
+
+if args.json is not None:
+    if lmresp[20:48] != "0000000000000000000000000000":
+        if args.hcutils:
+            data['ct3_crack'] = f"{args.hcutils}/ct3_to_ntlm.bin {ct3} {challenge}"
+        else:
+            data['ct3_crack'] = f"ct3_to_ntlm.bin {ct3} {challenge}"
+        data['hash1'] = f"{ct1}:{challenge}"
+        data['hash2'] = f"{ct2}:{challenge}"
+
+    if lmresp[20:48] == "0000000000000000000000000000":
+        if args.hcutils:
+            data['ct3_crack'] = f"{args.hcutils}/ct3_to_ntlm.bin {ct3} {clientchallenge} {lmresp}"
+        else:
+            data['ct3_crack'] = f"ct3_to_ntlm.bin {ct3} {clientchallenge} {lmresp}"
+        data['hash1'] = f"{ct1}:{srvchallenge}"
+        data['hash2'] = f"{ct2}:{srvchallenge}"
+
+    json_data = json.dumps(data)
+    if args.output:
+        with open(args.output, 'w') as json_file:
+            json.dump(data, json_file, indent=4)
+    else:
+        print(json_data)
+import hashlib
+import binascii
+import argparse
+import json
+import time
+import os
+
+def calc_md5_challenge(client_challenge, lm_resp):
+    combined_challenge = client_challenge + lm_resp[0:16]
+    m = hashlib.md5()
+    m.update(binascii.unhexlify(combined_challenge))
+    return m.hexdigest()
+
+parser = argparse.ArgumentParser()
+parser.add_argument('--ntlmv1', help='NTLMv1 Hash in responder format', required=True)
+parser.add_argument('--hashcat', help='hashcat path, eg: ~/git/hashcat', required=False)
+parser.add_argument('--hcutils', help='hashcat-utils path, eg: ~/git/hashcat-utils', required=False)
+parser.add_argument('--json', help='if this is set to anything it will output json, eg: --json 1', required=False)
+parser.add_argument('--output', help='output to a file, specify filename', required=False)
+args = parser.parse_args()
+
+# Splitting the NTLMv1 hash field
+hashsplit = args.ntlmv1.split(':')
+challenge = hashsplit[5]
+lmresp = hashsplit[3]
+ntresp = hashsplit[4]
+ct3 = ntresp[32:48]
+data = {
+    'ntlmv1': args.ntlmv1,
+    'user': hashsplit[0],
+    'domain': hashsplit[2],
+    'challenge': challenge,
+    'lmresp': lmresp,
+    'ntresp': ntresp,
+    'ct3': ct3
+}
+
+# Processing for different LM Response Conditions
+if lmresp[20:48] != "0000000000000000000000000000":
+    ct1 = ntresp[0:16]
+    ct2 = ntresp[16:32]
+    ct3 = ntresp[32:48]
+    output_data = {
+        'hostname': hashsplit[2],
+        'username': hashsplit[0],
+        'challenge': challenge,
+        'lm_response': lmresp,
+        'nt_response': ntresp,
+        'ct1': ct1,
+        'ct2': ct2,
+        'ct3': ct3
+    }
+
+    if args.json is None:
+        print("Hash Split Data: ", str(hashsplit))
+        print("Hostname: ", hashsplit[2])
+        print("Username: ", hashsplit[0])
+        print("Challenge: ", challenge)
+        print("LM Response: ", lmresp)
+        print("NT Response: ", ntresp)
+        print("CT1: ", ct1)
+        print("CT2: ", ct2)
+        print("CT3: ", ct3)
+        print("To Calculate Final NTLM Hash:")
+        if args.hcutils:
+            print(f"{args.hcutils}/ct3_to_ntlm.bin {ct3} {challenge}")
+        else:
+            print(f"./ct3_to_ntlm.bin {ct3} {challenge}")
+        print("To crack with hashcat, use this file:")
+        print(f"echo \"{ct1}:{challenge}\" >> 14000.hash")
+        print(f"echo \"{ct2}:{challenge}\" >> 14000.hash")
+        print(f"hashcat -m 14000 -a 3 -1 {args.hashcat}/charsets/DES_full.charset --hex-charset 14000.hash ?1?1?1?1?1?1?1?1")
+
+if lmresp[20:48] == "0000000000000000000000000000":
+    clientchallenge = hashsplit[5]
+    md5hash = calc_md5_challenge(clientchallenge, lmresp)
+    srvchallenge = md5hash[0:16]
+    data['srvchallenge'] = srvchallenge
+    ct1 = ntresp[0:16]
+    ct2 = ntresp[16:32]
+
+    if args.json is None:
+        print(f"Hash response is ESS, consider using responder with --lm or --disable-ess with a static challenge of 1122334455667788")
+        print(f"Client Challenge: {clientchallenge}")
+        print(f"Combined Challenge: {clientchallenge + lmresp[0:16]}")
+        print(f"MD5 Hash of Combined Challenge: {md5hash}")
+        print(f"Server Challenge: {srvchallenge}")
+        print("To calculate final NTLM hash use:")
+        if args.hcutils:
+            print(f"{args.hcutils}/ct3_to_ntlm.bin {ct3} {clientchallenge} {lmresp}")
+        else:
+            print(f"./ct3_to_ntlm.bin {ct3} {clientchallenge} {lmresp}")
+        print("To crack with hashcat, use this file:")
+        print(f"echo \"{ct1}:{srvchallenge}\" >> 14000.hash")
+        print(f"echo \"{ct2}:{srvchallenge}\" >> 14000.hash")
+        print(f"hashcat -m 14000 -a 3 -1 {args.hashcat}/charsets/DES_full.charset --hex-charset 14000.hash ?1?1?1?1?1?1?1?1")
+
+if args.json is not None:
+    if lmresp[20:48] != "0000000000000000000000000000":
+        if args.hcutils:
+            data['ct3_crack'] = f"{args.hcutils}/ct3_to_ntlm.bin {ct3} {challenge}"
+        else:
+            data['ct3_crack'] = f"ct3_to_ntlm.bin {ct3} {challenge}"
+        data['hash1'] = f"{ct1}:{challenge}"
+        data['hash2'] = f"{ct2}:{challenge}"
+
+    if lmresp[20:48] == "0000000000000000000000000000":
+        if args.hcutils:
+            data['ct3_crack'] = f"{args.hcutils}/ct3_to_ntlm.bin {ct3} {clientchallenge} {lmresp}"
+        else:
+            data['ct3_crack'] = f"ct3_to_ntlm.bin {ct3} {clientchallenge} {lmresp}"
+        data['hash1'] = f"{ct1}:{srvchallenge}"
+        data['hash2'] = f"{ct2}:{srvchallenge}"
+
+    json_data = json.dumps(data)
+    if args.output:
+        with open(args.output, 'w') as json_file:
+            json.dump(data, json_file, indent=4)
+    else:
+        print(json_data)
+import hashlib
+import binascii
+import argparse
+import json
+import time
+import os
+
+def calc_md5_challenge(client_challenge, lm_resp):
+    combined_challenge = client_challenge + lm_resp[0:16]
+    m = hashlib.md5()
+    m.update(binascii.unhexlify(combined_challenge))
+    return m.hexdigest()
+
+parser = argparse.ArgumentParser()
+parser.add_argument('--ntlmv1', help='NTLMv1 Hash in responder format', required=True)
+parser.add_argument('--hashcat', help='hashcat path, eg: ~/git/hashcat', required=False)
+parser.add_argument('--hcutils', help='hashcat-utils path, eg: ~/git/hashcat-utils', required=False)
+parser.add_argument('--json', help='if this is set to anything it will output json, eg: --json 1', required=False)
+parser.add_argument('--output', help='output to a file, specify filename', required=False)
+args = parser.parse_args()
+
+# Splitting the NTLMv1 hash field
+hashsplit = args.ntlmv1.split(':')
+challenge = hashsplit[5]
+lmresp = hashsplit[3]
+ntresp = hashsplit[4]
+ct3 = ntresp[32:48]
+data = {
+    'ntlmv1': args.ntlmv1,
+    'user': hashsplit[0],
+    'domain': hashsplit[2],
+    'challenge': challenge,
+    'lmresp': lmresp,
+    'ntresp': ntresp,
+    'ct3': ct3
+}
+
+# Processing for different LM Response Conditions
+if lmresp[20:48] != "0000000000000000000000000000":
+    ct1 = ntresp[0:16]
+    ct2 = ntresp[16:32]
+    ct3 = ntresp[32:48]
+    output_data = {
+        'hostname': hashsplit[2],
+        'username': hashsplit[0],
+        'challenge': challenge,
+        'lm_response': lmresp,
+        'nt_response': ntresp,
+        'ct1': ct1,
+        'ct2': ct2,
+        'ct3': ct3
+    }
+
+    if args.json is None:
+        print("Hash Split Data: ", str(hashsplit))
+        print("Hostname: ", hashsplit[2])
+        print("Username: ", hashsplit[0])
+        print("Challenge: ", challenge)
+        print("LM Response: ", lmresp)
+        print("NT Response: ", ntresp)
+        print("CT1: ", ct1)
+        print("CT2: ", ct2)
+        print("CT3: ", ct3)
+        print("To Calculate Final NTLM Hash:")
+        if args.hcutils:
+            print(f"{args.hcutils}/ct3_to_ntlm.bin {ct3} {challenge}")
+        else:
+            print(f"./ct3_to_ntlm.bin {ct3} {challenge}")
+        print("To crack with hashcat, use this file:")
+        print(f"echo \"{ct1}:{challenge}\" >> 14000.hash")
+        print(f"echo \"{ct2}:{challenge}\" >> 14000.hash")
+        print(f"hashcat -m 14000 -a 3 -1 {args.hashcat}/charsets/DES_full.charset --hex-charset 14000.hash ?1?1?1?1?1?1?1?1")
+
+if lmresp[20:48] == "0000000000000000000000000000":
+    clientchallenge = hashsplit[5]
+    md5hash = calc_md5_challenge(clientchallenge, lmresp)
+    srvchallenge = md5hash[0:16]
+    data['srvchallenge'] = srvchallenge
+    ct1 = ntresp[0:16]
+    ct2 = ntresp[16:32]
+
+    if args.json is None:
+        print(f"Hash response is ESS, consider using responder with --lm or --disable-ess with a static challenge of 1122334455667788")
+        print(f"Client Challenge: {clientchallenge}")
+        print(f"Combined Challenge: {clientchallenge + lmresp[0:16]}")
+        print(f"MD5 Hash of Combined Challenge: {md5hash}")
+        print(f"Server Challenge: {srvchallenge}")
+        print("To calculate final NTLM hash use:")
+        if args.hcutils:
+            print(f"{args.hcutils}/ct3_to_ntlm.bin {ct3} {clientchallenge} {lmresp}")
+        else:
+            print(f"./ct3_to_ntlm.bin {ct3} {clientchallenge} {lmresp}")
+        print("To crack with hashcat, use this file:")
+        print(f"echo \"{ct1}:{srvchallenge}\" >> 14000.hash")
+        print(f"echo \"{ct2}:{srvchallenge}\" >> 14000.hash")
+        print(f"hashcat -m 14000 -a 3 -1 {args.hashcat}/charsets/DES_full.charset --hex-charset 14000.hash ?1?1?1?1?1?1?1?1")
+
+if args.json is not None:
+    if lmresp[20:48] != "0000000000000000000000000000":
+        if args.hcutils:
+            data['ct3_crack'] = f"{args.hcutils}/ct3_to_ntlm.bin {ct3} {challenge}"
+        else:
+            data['ct3_crack'] = f"ct3_to_ntlm.bin {ct3} {challenge}"
+        data['hash1'] = f"{ct1}:{challenge}"
+        data['hash2'] = f"{ct2}:{challenge}"
+
+    if lmresp[20:48] == "0000000000000000000000000000":
+        if args.hcutils:
+            data['ct3_crack'] = f"{args.hcutils}/ct3_to_ntlm.bin {ct3} {clientchallenge} {lmresp}"
+        else:
+            data['ct3_crack'] = f"ct3_to_ntlm.bin {ct3} {clientchallenge} {lmresp}"
+        data['hash1'] = f"{ct1}:{srvchallenge}"
+        data['hash2'] = f"{ct2}:{srvchallenge}"
+
+    json_data = json.dumps(data)
+    if args.output:
+        with open(args.output, 'w') as json_file:
+            json.dump(data, json_file, indent=4)
+    else:
+        print(json_data)
+import hashlib
+import binascii
+import argparse
+import json
+import time
+import os
+
+def calc_md5_challenge(client_challenge, lm_resp):
+    combined_challenge = client_challenge + lm_resp[0:16]
+    m = hashlib.md5()
+    m.update(binascii.unhexlify(combined_challenge))
+    return m.hexdigest()
+
+parser = argparse.ArgumentParser()
+parser.add_argument('--ntlmv1', help='NTLMv1 Hash in responder format', required=True)
+parser.add_argument('--hashcat', help='hashcat path, eg: ~/git/hashcat', required=False)
+parser.add_argument('--hcutils', help='hashcat-utils path, eg: ~/git/hashcat-utils', required=False)
+parser.add_argument('--json', help='if this is set to anything it will output json, eg: --json 1', required=False)
+parser.add_argument('--output', help='output to a file, specify filename', required=False)
+args = parser.parse_args()
+
+# Splitting the NTLMv1 hash field
+hashsplit = args.ntlmv1.split(':')
+challenge = hashsplit[5]
+lmresp = hashsplit[3]
+ntresp = hashsplit[4]
+ct3 = ntresp[32:48]
+data = {
+    'ntlmv1': args.ntlmv1,
+    'user': hashsplit[0],
+    'domain': hashsplit[2],
+    'challenge': challenge,
+    'lmresp': lmresp,
+    'ntresp': ntresp,
+    'ct3': ct3
+}
+
+# Processing for different LM Response Conditions
+if lmresp[20:48] != "0000000000000000000000000000":
+    ct1 = ntresp[0:16]
+    ct2 = ntresp[16:32]
+    ct3 = ntresp[32:48]
+    output_data = {
+        'hostname': hashsplit[2],
+        'username': hashsplit[0],
+        'challenge': challenge,
+        'lm_response': lmresp,
+        'nt_response': ntresp,
+        'ct1': ct1,
+        'ct2': ct2,
+        'ct3': ct3
+    }
+
+    if args.json is None:
+        print("Hash Split Data: ", str(hashsplit))
+        print("Hostname: ", hashsplit[2])
+        print("Username: ", hashsplit[0])
+        print("Challenge: ", challenge)
+        print("LM Response: ", lmresp)
+        print("NT Response: ", ntresp)
+        print("CT1: ", ct1)
+        print("CT2: ", ct2)
+        print("CT3: ", ct3)
+        print("To Calculate Final NTLM Hash:")
+        if args.hcutils:
+            print(f"{args.hcutils}/ct3_to_ntlm.bin {ct3} {challenge}")
+        else:
+            print(f"./ct3_to_ntlm.bin {ct3} {challenge}")
+        print("To crack with hashcat, use this file:")
+        print(f"echo \"{ct1}:{challenge}\" >> 14000.hash")
+        print(f"echo \"{ct2}:{challenge}\" >> 14000.hash")
+        print(f"hashcat -m 14000 -a 3 -1 {args.hashcat}/charsets/DES_full.charset --hex-charset 14000.hash ?1?1?1?1?1?1?1?1")
+
+if lmresp[20:48] == "0000000000000000000000000000":
+    clientchallenge = hashsplit[5]
+    md5hash = calc_md5_challenge(clientchallenge, lmresp)
+    srvchallenge = md5hash[0:16]
+    data['srvchallenge'] = srvchallenge
+    ct1 = ntresp[0:16]
+    ct2 = ntresp[16:32]
+
+    if args.json is None:
+        print(f"Hash response is ESS, consider using responder with --lm or --disable-ess with a static challenge of 1122334455667788")
+        print(f"Client Challenge: {clientchallenge}")
+        print(f"Combined Challenge: {clientchallenge + lmresp[0:16]}")
+        print(f"MD5 Hash of Combined Challenge: {md5hash}")
+        print(f"Server Challenge: {srvchallenge}")
+        print("To calculate final NTLM hash use:")
+        if args.hcutils:
+            print(f"{args.hcutils}/ct3_to_ntlm.bin {ct3} {clientchallenge} {lmresp}")
+        else:
+            print(f"./ct3_to_ntlm.bin {ct3} {clientchallenge} {lmresp}")
+        print("To crack with hashcat, use this file:")
+        print(f"echo \"{ct1}:{srvchallenge}\" >> 14000.hash")
+        print(f"echo \"{ct2}:{srvchallenge}\" >> 14000.hash")
+        print(f"hashcat -m 14000 -a 3 -1 {args.hashcat}/charsets/DES_full.charset --hex-charset 14000.hash ?1?1?1?1?1?1?1?1")
+
+if args.json is not None:
+    if lmresp[20:48] != "0000000000000000000000000000":
+        if args.hcutils:
+            data['ct3_crack'] = f"{args.hcutils}/ct3_to_ntlm.bin {ct3} {challenge}"
+        else:
+            data['ct3_crack'] = f"ct3_to_ntlm.bin {ct3} {challenge}"
+        data['hash1'] = f"{ct1}:{challenge}"
+        data['hash2'] = f"{ct2}:{challenge}"
+
+    if lmresp[20:48] == "0000000000000000000000000000":
+        if args.hcutils:
+            data['ct3_crack'] = f"{args.hcutils}/ct3_to_ntlm.bin {ct3} {clientchallenge} {lmresp}"
+        else:
+            data['ct3_crack'] = f"ct3_to_ntlm.bin {ct3} {clientchallenge} {lmresp}"
+        data['hash1'] = f"{ct1}:{srvchallenge}"
+        data['hash2'] = f"{ct2}:{srvchallenge}"
+
+    json_data = json.dumps(data)
+    if args.output:
+        with open(args.output, 'w') as json_file:
+            json.dump(data, json_file, indent=4)
+    else:
+        print(json_data)
+import hashlib
+import binascii
+import argparse
+import json
+import time
+import os
+
+def calc_md5_challenge(client_challenge, lm_resp):
+    combined_challenge = client_challenge + lm_resp[0:16]
+    m = hashlib.md5()
+    m.update(binascii.unhexlify(combined_challenge))
+    return m.hexdigest()
+
+parser = argparse.ArgumentParser()
+parser.add_argument('--ntlmv1', help='NTLMv1 Hash in responder format', required=True)
+parser.add_argument('--hashcat', help='hashcat path, eg: ~/git/hashcat', required=False)
+parser.add_argument('--hcutils', help='hashcat-utils path, eg: ~/git/hashcat-utils', required=False)
+parser.add_argument('--json', help='if this is set to anything it will output json, eg: --json 1', required=False)
+parser.add_argument('--output', help='output to a file, specify filename', required=False)
+args = parser.parse_args()
+
+# Splitting the NTLMv1 hash field
+hashsplit = args.ntlmv1.split(':')
+challenge = hashsplit[5]
+lmresp = hashsplit[3]
+ntresp = hashsplit[4]
+ct3 = ntresp[32:48]
+data = {
+    'ntlmv1': args.ntlmv1,
+    'user': hashsplit[0],
+    'domain': hashsplit[2],
+    'challenge': challenge,
+    'lmresp': lmresp,
+    'ntresp': ntresp,
+    'ct3': ct3
+}
+
+# Processing for different LM Response Conditions
+if lmresp[20:48] != "0000000000000000000000000000":
+    ct1 = ntresp[0:16]
+    ct2 = ntresp[16:32]
+    ct3 = ntresp[32:48]
+    output_data = {
+        'hostname': hashsplit[2],
+        'username': hashsplit[0],
+        'challenge': challenge,
+        'lm_response': lmresp,
+        'nt_response': ntresp,
+        'ct1': ct1,
+        'ct2': ct2,
+        'ct3': ct3
+    }
+
+    if args.json is None:
+        print("Hash Split Data: ", str(hashsplit))
+        print("Hostname: ", hashsplit[2])
+        print("Username: ", hashsplit[0])
+        print("Challenge: ", challenge)
+        print("LM Response: ", lmresp)
+        print("NT Response: ", ntresp)
+        print("CT1: ", ct1)
+        print("CT2: ", ct2)
+        print("CT3: ", ct3)
+        print("To Calculate Final NTLM Hash:")
+        if args.hcutils:
+            print(f"{args.hcutils}/ct3_to_ntlm.bin {ct3} {challenge}")
+        else:
+            print(f"./ct3_to_ntlm.bin {ct3} {challenge}")
+        print("To crack with hashcat, use this file:")
+        print(f"echo \"{ct1}:{challenge}\" >> 14000.hash")
+        print(f"echo \"{ct2}:{challenge}\" >> 14000.hash")
+        print(f"hashcat -m 14000 -a 3 -1 {args.hashcat}/charsets/DES_full.charset --hex-charset 14000.hash ?1?1?1?1?1?1?1?1")
+
+if lmresp[20:48] == "0000000000000000000000000000":
+    clientchallenge = hashsplit[5]
+    md5hash = calc_md5_challenge(clientchallenge, lmresp)
+    srvchallenge = md5hash[0:16]
+    data['srvchallenge'] = srvchallenge
+    ct1 = ntresp[0:16]
+    ct2 = ntresp[16:32]
+
+    if args.json is None:
+        print(f"Hash response is ESS, consider using responder with --lm or --disable-ess with a static challenge of 1122334455667788")
+        print(f"Client Challenge: {clientchallenge}")
+        print(f"Combined Challenge: {clientchallenge + lmresp[0:16]}")
+        print(f"MD5 Hash of Combined Challenge: {md5hash}")
+        print(f"Server Challenge: {srvchallenge}")
+        print("To calculate final NTLM hash use:")
+        if args.hcutils:
+            print(f"{args.hcutils}/ct3_to_ntlm.bin {ct3} {clientchallenge} {lmresp}")
+        else:
+            print(f"./ct3_to_ntlm.bin {ct3} {clientchallenge} {lmresp}")
+        print("To crack with hashcat, use this file:")
+        print(f"echo \"{ct1}:{srvchallenge}\" >> 14000.hash")
+        print(f"echo \"{ct2}:{srvchallenge}\" >> 14000.hash")
+        print(f"hashcat -m 14000 -a 3 -1 {args.hashcat}/charsets/DES_full.charset --hex-charset 14000.hash ?1?1?1?1?1?1?1?1")
+
+if args.json is not None:
+    if lmresp[20:48] != "0000000000000000000000000000":
+        if args.hcutils:
+            data['ct3_crack'] = f"{args.hcutils}/ct3_to_ntlm.bin {ct3} {challenge}"
+        else:
+            data['ct3_crack'] = f"ct3_to_ntlm.bin {ct3} {challenge}"
+        data['hash1'] = f"{ct1}:{challenge}"
+        data['hash2'] = f"{ct2}:{challenge}"
+
+    if lmresp[20:48] == "0000000000000000000000000000":
+        if args.hcutils:
+            data['ct3_crack'] = f"{args.hcutils}/ct3_to_ntlm.bin {ct3} {clientchallenge} {lmresp}"
+        else:
+            data['ct3_crack'] = f"ct3_to_ntlm.bin {ct3} {clientchallenge} {lmresp}"
+        data['hash1'] = f"{ct1}:{srvchallenge}"
+        data['hash2'] = f"{ct2}:{srvchallenge}"
+
+    json_data = json.dumps(data)
+    if args.output:
+        with open(args.output, 'w') as json_file:
+            json.dump(data, json_file, indent=4)
+    else:
+        print(json_data)
+import hashlib
+import binascii
+import argparse
+import json
+import time
+import os
+
+def calc_md5_challenge(client_challenge, lm_resp):
+    combined_challenge = client_challenge + lm_resp[0:16]
+    m = hashlib.md5()
+    m.update(binascii.unhexlify(combined_challenge))
+    return m.hexdigest()
+
+parser = argparse.ArgumentParser()
+parser.add_argument('--ntlmv1', help='NTLMv1 Hash in responder format', required=True)
+parser.add_argument('--hashcat', help='hashcat path, eg: ~/git/hashcat', required=False)
+parser.add_argument('--hcutils', help='hashcat-utils path, eg: ~/git/hashcat-utils', required=False)
+parser.add_argument('--json', help='if this is set to anything it will output json, eg: --json 1', required=False)
+parser.add_argument('--output', help='output to a file, specify filename', required=False)
+args = parser.parse_args()
+
+# Splitting the NTLMv1 hash field
+hashsplit = args.ntlmv1.split(':')
+challenge = hashsplit[5]
+lmresp = hashsplit[3]
+ntresp = hashsplit[4]
+ct3 = ntresp[32:48]
+data = {
+    'ntlmv1': args.ntlmv1,
+    'user': hashsplit[0],
+    'domain': hashsplit[2],
+    'challenge': challenge,
+    'lmresp': lmresp,
+    'ntresp': ntresp,
+    'ct3': ct3
+}
+
+# Processing for different LM Response Conditions
+if lmresp[20:48] != "0000000000000000000000000000":
+    ct1 = ntresp[0:16]
+    ct2 = ntresp[16:32]
+    ct3 = ntresp[32:48]
+    output_data = {
+        'hostname': hashsplit[2],
+        'username': hashsplit[0],
+        'challenge': challenge,
+        'lm_response': lmresp,
+        'nt_response': ntresp,
+        'ct1': ct1,
+        'ct2': ct2,
+        'ct3': ct3
+    }
+
+    if args.json is None:
+        print("Hash Split Data: ", str(hashsplit))
+        print("Hostname: ", hashsplit[2])
+        print("Username: ", hashsplit[0])
+        print("Challenge: ", challenge)
+        print("LM Response: ", lmresp)
+        print("NT Response: ", ntresp)
+        print("CT1: ", ct1)
+        print("CT2: ", ct2)
+        print("CT3: ", ct3)
+        print("To Calculate Final NTLM Hash:")
+        if args.hcutils:
+            print(f"{args.hcutils}/ct3_to_ntlm.bin {ct3} {challenge}")
+        else:
+            print(f"./ct3_to_ntlm.bin {ct3} {challenge}")
+        print("To crack with hashcat, use this file:")
+        print(f"echo \"{ct1}:{challenge}\" >> 14000.hash")
+        print(f"echo \"{ct2}:{challenge}\" >> 14000.hash")
+        print(f"hashcat -m 14000 -a 3 -1 {args.hashcat}/charsets/DES_full.charset --hex-charset 14000.hash ?1?1?1?1?1?1?1?1")
+
+if lmresp[20:48] == "0000000000000000000000000000":
+    clientchallenge = hashsplit[5]
+    md5hash = calc_md5_challenge(clientchallenge, lmresp)
+    srvchallenge = md5hash[0:16]
+    data['srvchallenge'] = srvchallenge
+    ct1 = ntresp[0:16]
+    ct2 = ntresp[16:32]
+
+    if args.json is None:
+        print(f"Hash response is ESS, consider using responder with --lm or --disable-ess with a static challenge of 1122334455667788")
+        print(f"Client Challenge: {clientchallenge}")
+        print(f"Combined Challenge: {clientchallenge + lmresp[0:16]}")
+        print(f"MD5 Hash of Combined Challenge: {md5hash}")
+        print(f"Server Challenge: {srvchallenge}")
+        print("To calculate final NTLM hash use:")
+        if args.hcutils:
+            print(f"{args.hcutils}/ct3_to_ntlm.bin {ct3} {clientchallenge} {lmresp}")
+        else:
+            print(f"./ct3_to_ntlm.bin {ct3} {clientchallenge} {lmresp}")
+        print("To crack with hashcat, use this file:")
+        print(f"echo \"{ct1}:{srvchallenge}\" >> 14000.hash")
+        print(f"echo \"{ct2}:{srvchallenge}\" >> 14000.hash")
+        print(f"hashcat -m 14000 -a 3 -1 {args.hashcat}/charsets/DES_full.charset --hex-charset 14000.hash ?1?1?1?1?1?1?1?1")
+
+if args.json is not None:
+    if lmresp[20:48] != "0000000000000000000000000000":
+        if args.hcutils:
+            data['ct3_crack'] = f"{args.hcutils}/ct3_to_ntlm.bin {ct3} {challenge}"
+        else:
+            data['ct3_crack'] = f"ct3_to_ntlm.bin {ct3} {challenge}"
+        data['hash1'] = f"{ct1}:{challenge}"
+        data['hash2'] = f"{ct2}:{challenge}"
+
+    if lmresp[20:48] == "0000000000000000000000000000":
+        if args.hcutils:
+            data['ct3_crack'] = f"{args.hcutils}/ct3_to_ntlm.bin {ct3} {clientchallenge} {lmresp}"
+        else:
+            data['ct3_crack'] = f"ct3_to_ntlm.bin {ct3} {clientchallenge} {lmresp}"
+        data['hash1'] = f"{ct1}:{srvchallenge}"
+        data['hash2'] = f"{ct2}:{srvchallenge}"
+
+    json_data = json.dumps(data)
+    if args.output:
+        with open(args.output, 'w') as json_file:
+            json.dump(data, json_file, indent=4)
+    else:
+        print(json_data)
+import hashlib
+import binascii
+import argparse
+import json
+import time
+import os
+
+def calc_md5_challenge(client_challenge, lm_resp):
+    combined_challenge = client_challenge + lm_resp[0:16]
+    m = hashlib.md5()
+    m.update(binascii.unhexlify(combined_challenge))
+    return m.hexdigest()
+
+parser = argparse.ArgumentParser()
+parser.add_argument('--ntlmv1', help='NTLMv1 Hash in responder format', required=True)
+parser.add_argument('--hashcat', help='hashcat path, eg: ~/git/hashcat', required=False)
+parser.add_argument('--hcutils', help='hashcat-utils path, eg: ~/git/hashcat-utils', required=False)
+parser.add_argument('--json', help='if this is set to anything it will output json, eg: --json 1', required=False)
+parser.add_argument('--output', help='output to a file, specify filename', required=False)
+args = parser.parse_args()
+
+# Splitting the NTLMv1 hash field
+hashsplit = args.ntlmv1.split(':')
+challenge = hashsplit[5]
+lmresp = hashsplit[3]
+ntresp = hashsplit[4]
+ct3 = ntresp[32:48]
+data = {
+    'ntlmv1': args.ntlmv1,
+    'user': hashsplit[0],
+    'domain': hashsplit[2],
+    'challenge': challenge,
+    'lmresp': lmresp,
+    'ntresp': ntresp,
+    'ct3': ct3
+}
+
+# Processing for different LM Response Conditions
+if lmresp[20:48] != "0000000000000000000000000000":
+    ct1 = ntresp[0:16]
+    ct2 = ntresp[16:32]
+    ct3 = ntresp[32:48]
+    output_data = {
+        'hostname': hashsplit[2],
+        'username': hashsplit[0],
+        'challenge': challenge,
+        'lm_response': lmresp,
+        'nt_response': ntresp,
+        'ct1': ct1,
+        'ct2': ct2,
+        'ct3': ct3
+    }
+
+    if args.json is None:
+        print("Hash Split Data: ", str(hashsplit))
+        print("Hostname: ", hashsplit[2])
+        print("Username: ", hashsplit[0])
+        print("Challenge: ", challenge)
+        print("LM Response: ", lmresp)
+        print("NT Response: ", ntresp)
+        print("CT1: ", ct1)
+        print("CT2: ", ct2)
+        print("CT3: ", ct3)
+        print("To Calculate Final NTLM Hash:")
+        if args.hcutils:
+            print(f"{args.hcutils}/ct3_to_ntlm.bin {ct3} {challenge}")
+        else:
+            print(f"./ct3_to_ntlm.bin {ct3} {challenge}")
+        print("To crack with hashcat, use this file:")
+        print(f"echo \"{ct1}:{challenge}\" >> 14000.hash")
+        print(f"echo \"{ct2}:{challenge}\" >> 14000.hash")
+        print(f"hashcat -m 14000 -a 3 -1 {args.hashcat}/charsets/DES_full.charset --hex-charset 14000.hash ?1?1?1?1?1?1?1?1")
+
+if lmresp[20:48] == "0000000000000000000000000000":
+    clientchallenge = hashsplit[5]
+    md5hash = calc_md5_challenge(clientchallenge, lmresp)
+    srvchallenge = md5hash[0:16]
+    data['srvchallenge'] = srvchallenge
+    ct1 = ntresp[0:16]
+    ct2 = ntresp[16:32]
+
+    if args.json is None:
+        print(f"Hash response is ESS, consider using responder with --lm or --disable-ess with a static challenge of 1122334455667788")
+        print(f"Client Challenge: {clientchallenge}")
+        print(f"Combined Challenge: {clientchallenge + lmresp[0:16]}")
+        print(f"MD5 Hash of Combined Challenge: {md5hash}")
+        print(f"Server Challenge: {srvchallenge}")
+        print("To calculate final NTLM hash use:")
+        if args.hcutils:
+            print(f"{args.hcutils}/ct3_to_ntlm.bin {ct3} {clientchallenge} {lmresp}")
+        else:
+            print(f"./ct3_to_ntlm.bin {ct3} {clientchallenge} {lmresp}")
+        print("To crack with hashcat, use this file:")
+        print(f"echo \"{ct1}:{srvchallenge}\" >> 14000.hash")
+        print(f"echo \"{ct2}:{srvchallenge}\" >> 14000.hash")
+        print(f"hashcat -m 14000 -a 3 -1 {args.hashcat}/charsets/DES_full.charset --hex-charset 14000.hash ?1?1?1?1?1?1?1?1")
+
+if args.json is not None:
+    if lmresp[20:48] != "0000000000000000000000000000":
+        if args.hcutils:
+            data['ct3_crack'] = f"{args.hcutils}/ct3_to_ntlm.bin {ct3} {challenge}"
+        else:
+            data['ct3_crack'] = f"ct3_to_ntlm.bin {ct3} {challenge}"
+        data['hash1'] = f"{ct1}:{challenge}"
+        data['hash2'] = f"{ct2}:{challenge}"
+
+    if lmresp[20:48] == "0000000000000000000000000000":
+        if args.hcutils:
+            data['ct3_crack'] = f"{args.hcutils}/ct3_to_ntlm.bin {ct3} {clientchallenge} {lmresp}"
+        else:
+            data['ct3_crack'] = f"ct3_to_ntlm.bin {ct3} {clientchallenge} {lmresp}"
+        data['hash1'] = f"{ct1}:{srvchallenge}"
+        data['hash2'] = f"{ct2}:{srvchallenge}"
+
+    json_data = json.dumps(data)
+    if args.output:
+        with open(args.output, 'w') as json_file:
+            json.dump(data, json_file, indent=4)
+    else:
+        print(json_data)
+import hashlib
+import binascii
+import argparse
+import json
+import time
+import os
+
+def calc_md5_challenge(client_challenge, lm_resp):
+    combined_challenge = client_challenge + lm_resp[0:16]
+    m = hashlib.md5()
+    m.update(binascii.unhexlify(combined_challenge))
+    return m.hexdigest()
+
+parser = argparse.ArgumentParser()
+parser.add_argument('--ntlmv1', help='NTLMv1 Hash in responder format', required=True)
+parser.add_argument('--hashcat', help='hashcat path, eg: ~/git/hashcat', required=False)
+parser.add_argument('--hcutils', help='hashcat-utils path, eg: ~/git/hashcat-utils', required=False)
+parser.add_argument('--json', help='if this is set to anything it will output json, eg: --json 1', required=False)
+parser.add_argument('--output', help='output to a file, specify filename', required=False)
+args = parser.parse_args()
+
+# Splitting the NTLMv1 hash field
+hashsplit = args.ntlmv1.split(':')
+challenge = hashsplit[5]
+lmresp = hashsplit[3]
+ntresp = hashsplit[4]
+ct3 = ntresp[32:48]
+data = {
+    'ntlmv1': args.ntlmv1,
+    'user': hashsplit[0],
+    'domain': hashsplit[2],
+    'challenge': challenge,
+    'lmresp': lmresp,
+    'ntresp': ntresp,
+    'ct3': ct3
+}
+
+# Processing for different LM Response Conditions
+if lmresp[20:48] != "0000000000000000000000000000":
+    ct1 = ntresp[0:16]
+    ct2 = ntresp[16:32]
+    ct3 = ntresp[32:48]
+    output_data = {
+        'hostname': hashsplit[2],
+        'username': hashsplit[0],
+        'challenge': challenge,
+        'lm_response': lmresp,
+        'nt_response': ntresp,
+        'ct1': ct1,
+        'ct2': ct2,
+        'ct3': ct3
+    }
+
+    if args.json is None:
+        print("Hash Split Data: ", str(hashsplit))
+        print("Hostname: ", hashsplit[2])
+        print("Username: ", hashsplit[0])
+        print("Challenge: ", challenge)
+        print("LM Response: ", lmresp)
+        print("NT Response: ", ntresp)
+        print("CT1: ", ct1)
+        print("CT2: ", ct2)
+        print("CT3: ", ct3)
+        print("To Calculate Final NTLM Hash:")
+        if args.hcutils:
+            print(f"{args.hcutils}/ct3_to_ntlm.bin {ct3} {challenge}")
+        else:
+            print(f"./ct3_to_ntlm.bin {ct3} {challenge}")
+        print("To crack with hashcat, use this file:")
+        print(f"echo \"{ct1}:{challenge}\" >> 14000.hash")
+        print(f"echo \"{ct2}:{challenge}\" >> 14000.hash")
+        print(f"hashcat -m 14000 -a 3 -1 {args.hashcat}/charsets/DES_full.charset --hex-charset 14000.hash ?1?1?1?1?1?1?1?1")
+
+if lmresp[20:48] == "0000000000000000000000000000":
+    clientchallenge = hashsplit[5]
+    md5hash = calc_md5_challenge(clientchallenge, lmresp)
+    srvchallenge = md5hash[0:16]
+    data['srvchallenge'] = srvchallenge
+    ct1 = ntresp[0:16]
+    ct2 = ntresp[16:32]
+
+    if args.json is None:
+        print(f"Hash response is ESS, consider using responder with --lm or --disable-ess with a static challenge of 1122334455667788")
+        print(f"Client Challenge: {clientchallenge}")
+        print(f"Combined Challenge: {clientchallenge + lmresp[0:16]}")
+        print(f"MD5 Hash of Combined Challenge: {md5hash}")
+        print(f"Server Challenge: {srvchallenge}")
+        print("To calculate final NTLM hash use:")
+        if args.hcutils:
+            print(f"{args.hcutils}/ct3_to_ntlm.bin {ct3} {clientchallenge} {lmresp}")
+        else:
+            print(f"./ct3_to_ntlm.bin {ct3} {clientchallenge} {lmresp}")
+        print("To crack with hashcat, use this file:")
+        print(f"echo \"{ct1}:{srvchallenge}\" >> 14000.hash")
+        print(f"echo \"{ct2}:{srvchallenge}\" >> 14000.hash")
+        print(f"hashcat -m 14000 -a 3 -1 {args.hashcat}/charsets/DES_full.charset --hex-charset 14000.hash ?1?1?1?1?1?1?1?1")
+
+if args.json is not None:
+    if lmresp[20:48] != "0000000000000000000000000000":
+        if args.hcutils:
+            data['ct3_crack'] = f"{args.hcutils}/ct3_to_ntlm.bin {ct3} {challenge}"
+        else:
+            data['ct3_crack'] = f"ct3_to_ntlm.bin {ct3} {challenge}"
+        data['hash1'] = f"{ct1}:{challenge}"
+        data['hash2'] = f"{ct2}:{challenge}"
+
+    if lmresp[20:48] == "0000000000000000000000000000":
+        if args.hcutils:
+            data['ct3_crack'] = f"{args.hcutils}/ct3_to_ntlm.bin {ct3} {clientchallenge} {lmresp}"
+        else:
+            data['ct3_crack'] = f"ct3_to_ntlm.bin {ct3} {clientchallenge} {lmresp}"
+        data['hash1'] = f"{ct1}:{srvchallenge}"
+        data['hash2'] = f"{ct2}:{srvchallenge}"
+
+    json_data = json.dumps(data)
+    if args.output:
+        with open(args.output, 'w') as json_file:
+            json.dump(data, json_file, indent=4)
+    else:
+        print(json_data)
+import hashlib
+import binascii
+import argparse
+import json
+import time
+import os
+
+def calc_md5_challenge(client_challenge, lm_resp):
+    combined_challenge = client_challenge + lm_resp[0:16]
+    m = hashlib.md5()
+    m.update(binascii.unhexlify(combined_challenge))
+    return m.hexdigest()
+
+parser = argparse.ArgumentParser()
+parser.add_argument('--ntlmv1', help='NTLMv1 Hash in responder format', required=True)
+parser.add_argument('--hashcat', help='hashcat path, eg: ~/git/hashcat', required=False)
+parser.add_argument('--hcutils', help='hashcat-utils path, eg: ~/git/hashcat-utils', required=False)
+parser.add_argument('--json', help='if this is set to anything it will output json, eg: --json 1', required=False)
+parser.add_argument('--output', help='output to a file, specify filename', required=False)
+args = parser.parse_args()
+
+# Splitting the NTLMv1 hash field
+hashsplit = args.ntlmv1.split(':')
+challenge = hashsplit[5]
+lmresp = hashsplit[3]
+ntresp = hashsplit[4]
+ct3 = ntresp[32:48]
+data = {
+    'ntlmv1': args.ntlmv1,
+    'user': hashsplit[0],
+    'domain': hashsplit[2],
+    'challenge': challenge,
+    'lmresp': lmresp,
+    'ntresp': ntresp,
+    'ct3': ct3
+}
+
+# Processing for different LM Response Conditions
+if lmresp[20:48] != "0000000000000000000000000000":
+    ct1 = ntresp[0:16]
+    ct2 = ntresp[16:32]
+    ct3 = ntresp[32:48]
+    output_data = {
+        'hostname': hashsplit[2],
+        'username': hashsplit[0],
+        'challenge': challenge,
+        'lm_response': lmresp,
+        'nt_response': ntresp,
+        'ct1': ct1,
+        'ct2': ct2,
+        'ct3': ct3
+    }
+
+    if args.json is None:
+        print("Hash Split Data: ", str(hashsplit))
+        print("Hostname: ", hashsplit[2])
+        print("Username: ", hashsplit[0])
+        print("Challenge: ", challenge)
+        print("LM Response: ", lmresp)
+        print("NT Response: ", ntresp)
+        print("CT1: ", ct1)
+        print("CT2: ", ct2)
+        print("CT3: ", ct3)
+        print("To Calculate Final NTLM Hash:")
+        if args.hcutils:
+            print(f"{args.hcutils}/ct3_to_ntlm.bin {ct3} {challenge}")
+        else:
+            print(f"./ct3_to_ntlm.bin {ct3} {challenge}")
+        print("To crack with hashcat, use this file:")
+        print(f"echo \"{ct1}:{challenge}\" >> 14000.hash")
+        print(f"echo \"{ct2}:{challenge}\" >> 14000.hash")
+        print(f"hashcat -m 14000 -a 3 -1 {args.hashcat}/charsets/DES_full.charset --hex-charset 14000.hash ?1?1?1?1?1?1?1?1")
+
+if lmresp[20:48] == "0000000000000000000000000000":
+    clientchallenge = hashsplit[5]
+    md5hash = calc_md5_challenge(clientchallenge, lmresp)
+    srvchallenge = md5hash[0:16]
+    data['srvchallenge'] = srvchallenge
+    ct1 = ntresp[0:16]
+    ct2 = ntresp[16:32]
+
+    if args.json is None:
+        print(f"Hash response is ESS, consider using responder with --lm or --disable-ess with a static challenge of 1122334455667788")
+        print(f"Client Challenge: {clientchallenge}")
+        print(f"Combined Challenge: {clientchallenge + lmresp[0:16]}")
+        print(f"MD5 Hash of Combined Challenge: {md5hash}")
+        print(f"Server Challenge: {srvchallenge}")
+        print("To calculate final NTLM hash use:")
+        if args.hcutils:
+            print(f"{args.hcutils}/ct3_to_ntlm.bin {ct3} {clientchallenge} {lmresp}")
+        else:
+            print(f"./ct3_to_ntlm.bin {ct3} {clientchallenge} {lmresp}")
+        print("To crack with hashcat, use this file:")
+        print(f"echo \"{ct1}:{srvchallenge}\" >> 14000.hash")
+        print(f"echo \"{ct2}:{srvchallenge}\" >> 14000.hash")
+        print(f"hashcat -m 14000 -a 3 -1 {args.hashcat}/charsets/DES_full.charset --hex-charset 14000.hash ?1?1?1?1?1?1?1?1")
+
+if args.json is not None:
+    if lmresp[20:48] != "0000000000000000000000000000":
+        if args.hcutils:
+            data['ct3_crack'] = f"{args.hcutils}/ct3_to_ntlm.bin {ct3} {challenge}"
+        else:
+            data['ct3_crack'] = f"ct3_to_ntlm.bin {ct3} {challenge}"
+        data['hash1'] = f"{ct1}:{challenge}"
+        data['hash2'] = f"{ct2}:{challenge}"
+
+    if lmresp[20:48] == "0000000000000000000000000000":
+        if args.hcutils:
+            data['ct3_crack'] = f"{args.hcutils}/ct3_to_ntlm.bin {ct3} {clientchallenge} {lmresp}"
+        else:
+            data['ct3_crack'] = f"ct3_to_ntlm.bin {ct3} {clientchallenge} {lmresp}"
+        data['hash1'] = f"{ct1}:{srvchallenge}"
+        data['hash2'] = f"{ct2}:{srvchallenge}"
+
+    json_data = json.dumps(data)
+    if args.output:
+        with open(args.output, 'w') as json_file:
+            json.dump(data, json_file, indent=4)
+    else:
+        print(json_data)
+import hashlib
+import binascii
+import argparse
+import json
+import time
+import os
+
+def calc_md5_challenge(client_challenge, lm_resp):
+    combined_challenge = client_challenge + lm_resp[0:16]
+    m = hashlib.md5()
+    m.update(binascii.unhexlify(combined_challenge))
+    return m.hexdigest()
+
+parser = argparse.ArgumentParser()
+parser.add_argument('--ntlmv1', help='NTLMv1 Hash in responder format', required=True)
+parser.add_argument('--hashcat', help='hashcat path, eg: ~/git/hashcat', required=False)
+parser.add_argument('--hcutils', help='hashcat-utils path, eg: ~/git/hashcat-utils', required=False)
+parser.add_argument('--json', help='if this is set to anything it will output json, eg: --json 1', required=False)
+parser.add_argument('--output', help='output to a file, specify filename', required=False)
+args = parser.parse_args()
+
+# Splitting the NTLMv1 hash field
+hashsplit = args.ntlmv1.split(':')
+challenge = hashsplit[5]
+lmresp = hashsplit[3]
+ntresp = hashsplit[4]
+ct3 = ntresp[32:48]
+data = {
+    'ntlmv1': args.ntlmv1,
+    'user': hashsplit[0],
+    'domain': hashsplit[2],
+    'challenge': challenge,
+    'lmresp': lmresp,
+    'ntresp': ntresp,
+    'ct3': ct3
+}
+
+# Processing for different LM Response Conditions
+if lmresp[20:48] != "0000000000000000000000000000":
+    ct1 = ntresp[0:16]
+    ct2 = ntresp[16:32]
+    ct3 = ntresp[32:48]
+    output_data = {
+        'hostname': hashsplit[2],
+        'username': hashsplit[0],
+        'challenge': challenge,
+        'lm_response': lmresp,
+        'nt_response': ntresp,
+        'ct1': ct1,
+        'ct2': ct2,
+        'ct3': ct3
+    }
+
+    if args.json is None:
+        print("Hash Split Data: ", str(hashsplit))
+        print("Hostname: ", hashsplit[2])
+        print("Username: ", hashsplit[0])
+        print("Challenge: ", challenge)
+        print("LM Response: ", lmresp)
+        print("NT Response: ", ntresp)
+        print("CT1: ", ct1)
+        print("CT2: ", ct2)
+        print("CT3: ", ct3)
+        print("To Calculate Final NTLM Hash:")
+        if args.hcutils:
+            print(f"{args.hcutils}/ct3_to_ntlm.bin {ct3} {challenge}")
+        else:
+            print(f"./ct3_to_ntlm.bin {ct3} {challenge}")
+        print("To crack with hashcat, use this file:")
+        print(f"echo \"{ct1}:{challenge}\" >> 14000.hash")
+        print(f"echo \"{ct2}:{challenge}\" >> 14000.hash")
+        print(f"hashcat -m 14000 -a 3 -1 {args.hashcat}/charsets/DES_full.charset --hex-charset 14000.hash ?1?1?1?1?1?1?1?1")
+
+if lmresp[20:48] == "0000000000000000000000000000":
+    clientchallenge = hashsplit[5]
+    md5hash = calc_md5_challenge(clientchallenge, lmresp)
+    srvchallenge = md5hash[0:16]
+    data['srvchallenge'] = srvchallenge
+    ct1 = ntresp[0:16]
+    ct2 = ntresp[16:32]
+
+    if args.json is None:
+        print(f"Hash response is ESS, consider using responder with --lm or --disable-ess with a static challenge of 1122334455667788")
+        print(f"Client Challenge: {clientchallenge}")
+        print(f"Combined Challenge: {clientchallenge + lmresp[0:16]}")
+        print(f"MD5 Hash of Combined Challenge: {md5hash}")
+        print(f"Server Challenge: {srvchallenge}")
+        print("To calculate final NTLM hash use:")
+        if args.hcutils:
+            print(f"{args.hcutils}/ct3_to_ntlm.bin {ct3} {clientchallenge} {lmresp}")
+        else:
+            print(f"./ct3_to_ntlm.bin {ct3} {clientchallenge} {lmresp}")
+        print("To crack with hashcat, use this file:")
+        print(f"echo \"{ct1}:{srvchallenge}\" >> 14000.hash")
+        print(f"echo \"{ct2}:{srvchallenge}\" >> 14000.hash")
+        print(f"hashcat -m 14000 -a 3 -1 {args.hashcat}/charsets/DES_full.charset --hex-charset 14000.hash ?1?1?1?1?1?1?1?1")
+
+if args.json is not None:
+    if lmresp[20:48] != "0000000000000000000000000000":
+        if args.hcutils:
+            data['ct3_crack'] = f"{args.hcutils}/ct3_to_ntlm.bin {ct3} {challenge}"
+        else:
+            data['ct3_crack'] = f"ct3_to_ntlm.bin {ct3} {challenge}"
+        data['hash1'] = f"{ct1}:{challenge}"
+        data['hash2'] = f"{ct2}:{challenge}"
+
+    if lmresp[20:48] == "0000000000000000000000000000":
+        if args.hcutils:
+            data['ct3_crack'] = f"{args.hcutils}/ct3_to_ntlm.bin {ct3} {clientchallenge} {lmresp}"
+        else:
+            data['ct3_crack'] = f"ct3_to_ntlm.bin {ct3} {clientchallenge} {lmresp}"
+        data['hash1'] = f"{ct1}:{srvchallenge}"
+        data['hash2'] = f"{ct2}:{srvchallenge}"
+
+    json_data = json.dumps(data)
+    if args.output:
+        with open(args.output, 'w') as json_file:
+            json.dump(data, json_file, indent=4)
+    else:
+        print(json_data)
+import hashlib
+import binascii
+import argparse
+import json
+import time
+import os
+
+def calc_md5_challenge(client_challenge, lm_resp):
+    combined_challenge = client_challenge + lm_resp[0:16]
+    m = hashlib.md5()
+    m.update(binascii.unhexlify(combined_challenge))
+    return m.hexdigest()
+
+parser = argparse.ArgumentParser()
+parser.add_argument('--ntlmv1', help='NTLMv1 Hash in responder format', required=True)
+parser.add_argument('--hashcat', help='hashcat path, eg: ~/git/hashcat', required=False)
+parser.add_argument('--hcutils', help='hashcat-utils path, eg: ~/git/hashcat-utils', required=False)
+parser.add_argument('--json', help='if this is set to anything it will output json, eg: --json 1', required=False)
+parser.add_argument('--output', help='output to a file, specify filename', required=False)
+args = parser.parse_args()
+
+# Splitting the NTLMv1 hash field
+hashsplit = args.ntlmv1.split(':')
+challenge = hashsplit[5]
+lmresp = hashsplit[3]
+ntresp = hashsplit[4]
+ct3 = ntresp[32:48]
+data = {
+    'ntlmv1': args.ntlmv1,
+    'user': hashsplit[0],
+    'domain': hashsplit[2],
+    'challenge': challenge,
+    'lmresp': lmresp,
+    'ntresp': ntresp,
+    'ct3': ct3
+}
+
+# Processing for different LM Response Conditions
+if lmresp[20:48] != "0000000000000000000000000000":
+    ct1 = ntresp[0:16]
+    ct2 = ntresp[16:32]
+    ct3 = ntresp[32:48]
+    output_data = {
+        'hostname': hashsplit[2],
+        'username': hashsplit[0],
+        'challenge': challenge,
+        'lm_response': lmresp,
+        'nt_response': ntresp,
+        'ct1': ct1,
+        'ct2': ct2,
+        'ct3': ct3
+    }
+
+    if args.json is None:
+        print("Hash Split Data: ", str(hashsplit))
+        print("Hostname: ", hashsplit[2])
+        print("Username: ", hashsplit[0])
+        print("Challenge: ", challenge)
+        print("LM Response: ", lmresp)
+        print("NT Response: ", ntresp)
+        print("CT1: ", ct1)
+        print("CT2: ", ct2)
+        print("CT3: ", ct3)
+        print("To Calculate Final NTLM Hash:")
+        if args.hcutils:
+            print(f"{args.hcutils}/ct3_to_ntlm.bin {ct3} {challenge}")
+        else:
+            print(f"./ct3_to_ntlm.bin {ct3} {challenge}")
+        print("To crack with hashcat, use this file:")
+        print(f"echo \"{ct1}:{challenge}\" >> 14000.hash")
+        print(f"echo \"{ct2}:{challenge}\" >> 14000.hash")
+        print(f"hashcat -m 14000 -a 3 -1 {args.hashcat}/charsets/DES_full.charset --hex-charset 14000.hash ?1?1?1?1?1?1?1?1")
+
+if lmresp[20:48] == "0000000000000000000000000000":
+    clientchallenge = hashsplit[5]
+    md5hash = calc_md5_challenge(clientchallenge, lmresp)
+    srvchallenge = md5hash[0:16]
+    data['srvchallenge'] = srvchallenge
+    ct1 = ntresp[0:16]
+    ct2 = ntresp[16:32]
+
+    if args.json is None:
+        print(f"Hash response is ESS, consider using responder with --lm or --disable-ess with a static challenge of 1122334455667788")
+        print(f"Client Challenge: {clientchallenge}")
+        print(f"Combined Challenge: {clientchallenge + lmresp[0:16]}")
+        print(f"MD5 Hash of Combined Challenge: {md5hash}")
+        print(f"Server Challenge: {srvchallenge}")
+        print("To calculate final NTLM hash use:")
+        if args.hcutils:
+            print(f"{args.hcutils}/ct3_to_ntlm.bin {ct3} {clientchallenge} {lmresp}")
+        else:
+            print(f"./ct3_to_ntlm.bin {ct3} {clientchallenge} {lmresp}")
+        print("To crack with hashcat, use this file:")
+        print(f"echo \"{ct1}:{srvchallenge}\" >> 14000.hash")
+        print(f"echo \"{ct2}:{srvchallenge}\" >> 14000.hash")
+        print(f"hashcat -m 14000 -a 3 -1 {args.hashcat}/charsets/DES_full.charset --hex-charset 14000.hash ?1?1?1?1?1?1?1?1")
+
+if args.json is not None:
+    if lmresp[20:48] != "0000000000000000000000000000":
+        if args.hcutils:
+            data['ct3_crack'] = f"{args.hcutils}/ct3_to_ntlm.bin {ct3} {challenge}"
+        else:
+            data['ct3_crack'] = f"ct3_to_ntlm.bin {ct3} {challenge}"
+        data['hash1'] = f"{ct1}:{challenge}"
+        data['hash2'] = f"{ct2}:{challenge}"
+
+    if lmresp[20:48] == "0000000000000000000000000000":
+        if args.hcutils:
+            data['ct3_crack'] = f"{args.hcutils}/ct3_to_ntlm.bin {ct3} {clientchallenge} {lmresp}"
+        else:
+            data['ct3_crack'] = f"ct3_to_ntlm.bin {ct3} {clientchallenge} {lmresp}"
+        data['hash1'] = f"{ct1}:{srvchallenge}"
+        data['hash2'] = f"{ct2}:{srvchallenge}"
+
+    json_data = json.dumps(data)
+    if args.output:
+        with open(args.output, 'w') as json_file:
+            json.dump(data, json_file, indent=4)
+    else:
+        print(json_data)
+import hashlib
+import binascii
+import argparse
+import json
+import time
+import os
+
+def calc_md5_challenge(client_challenge, lm_resp):
+    combined_challenge = client_challenge + lm_resp[0:16]
+    m = hashlib.md5()
+    m.update(binascii.unhexlify(combined_challenge))
+    return m.hexdigest()
+
+parser = argparse.ArgumentParser()
+parser.add_argument('--ntlmv1', help='NTLMv1 Hash in responder format', required=True)
+parser.add_argument('--hashcat', help='hashcat path, eg: ~/git/hashcat', required=False)
+parser.add_argument('--hcutils', help='hashcat-utils path, eg: ~/git/hashcat-utils', required=False)
+parser.add_argument('--json', help='if this is set to anything it will output json, eg: --json 1', required=False)
+parser.add_argument('--output', help='output to a file, specify filename', required=False)
+args = parser.parse_args()
+
+# Splitting the NTLMv1 hash field
+hashsplit = args.ntlmv1.split(':')
+challenge = hashsplit[5]
+lmresp = hashsplit[3]
+ntresp = hashsplit[4]
+ct3 = ntresp[32:48]
+data = {
+    'ntlmv1': args.ntlmv1,
+    'user': hashsplit[0],
+    'domain': hashsplit[2],
+    'challenge': challenge,
+    'lmresp': lmresp,
+    'ntresp': ntresp,
+    'ct3': ct3
+}
+
+# Processing for different LM Response Conditions
+if lmresp[20:48] != "0000000000000000000000000000":
+    ct1 = ntresp[0:16]
+    ct2 = ntresp[16:32]
+    ct3 = ntresp[32:48]
+    output_data = {
+        'hostname': hashsplit[2],
+        'username': hashsplit[0],
+        'challenge': challenge,
+        'lm_response': lmresp,
+        'nt_response': ntresp,
+        'ct1': ct1,
+        'ct2': ct2,
+        'ct3': ct3
+    }
+
+    if args.json is None:
+        print("Hash Split Data: ", str(hashsplit))
+        print("Hostname: ", hashsplit[2])
+        print("Username: ", hashsplit[0])
+        print("Challenge: ", challenge)
+        print("LM Response: ", lmresp)
+        print("NT Response: ", ntresp)
+        print("CT1: ", ct1)
+        print("CT2: ", ct2)
+        print("CT3: ", ct3)
+        print("To Calculate Final NTLM Hash:")
+        if args.hcutils:
+            print(f"{args.hcutils}/ct3_to_ntlm.bin {ct3} {challenge}")
+        else:
+            print(f"./ct3_to_ntlm.bin {ct3} {challenge}")
+        print("To crack with hashcat, use this file:")
+        print(f"echo \"{ct1}:{challenge}\" >> 14000.hash")
+        print(f"echo \"{ct2}:{challenge}\" >> 14000.hash")
+        print(f"hashcat -m 14000 -a 3 -1 {args.hashcat}/charsets/DES_full.charset --hex-charset 14000.hash ?1?1?1?1?1?1?1?1")
+
+if lmresp[20:48] == "0000000000000000000000000000":
+    clientchallenge = hashsplit[5]
+    md5hash = calc_md5_challenge(clientchallenge, lmresp)
+    srvchallenge = md5hash[0:16]
+    data['srvchallenge'] = srvchallenge
+    ct1 = ntresp[0:16]
+    ct2 = ntresp[16:32]
+
+    if args.json is None:
+        print(f"Hash response is ESS, consider using responder with --lm or --disable-ess with a static challenge of 1122334455667788")
+        print(f"Client Challenge: {clientchallenge}")
+        print(f"Combined Challenge: {clientchallenge + lmresp[0:16]}")
+        print(f"MD5 Hash of Combined Challenge: {md5hash}")
+        print(f"Server Challenge: {srvchallenge}")
+        print("To calculate final NTLM hash use:")
+        if args.hcutils:
+            print(f"{args.hcutils}/ct3_to_ntlm.bin {ct3} {clientchallenge} {lmresp}")
+        else:
+            print(f"./ct3_to_ntlm.bin {ct3} {clientchallenge} {lmresp}")
+        print("To crack with hashcat, use this file:")
+        print(f"echo \"{ct1}:{srvchallenge}\" >> 14000.hash")
+        print(f"echo \"{ct2}:{srvchallenge}\" >> 14000.hash")
+        print(f"hashcat -m 14000 -a 3 -1 {args.hashcat}/charsets/DES_full.charset --hex-charset 14000.hash ?1?1?1?1?1?1?1?1")
+
+if args.json is not None:
+    if lmresp[20:48] != "0000000000000000000000000000":
+        if args.hcutils:
+            data['ct3_crack'] = f"{args.hcutils}/ct3_to_ntlm.bin {ct3} {challenge}"
+        else:
+            data['ct3_crack'] = f"ct3_to_ntlm.bin {ct3} {challenge}"
+        data['hash1'] = f"{ct1}:{challenge}"
+        data['hash2'] = f"{ct2}:{challenge}"
+
+    if lmresp[20:48] == "0000000000000000000000000000":
+        if args.hcutils:
+            data['ct3_crack'] = f"{args.hcutils}/ct3_to_ntlm.bin {ct3} {clientchallenge} {lmresp}"
+        else:
+            data['ct3_crack'] = f"ct3_to_ntlm.bin {ct3} {clientchallenge} {lmresp}"
+        data['hash1'] = f"{ct1}:{srvchallenge}"
+        data['hash2'] = f"{ct2}:{srvchallenge}"
+
+    json_data = json.dumps(data)
+    if args.output:
+        with open(args.output, 'w') as json_file:
+            json.dump(data, json_file, indent=4)
+    else:
+        print(json_data)
+import hashlib
+import binascii
+import argparse
+import json
+import time
+import os
+
+def calc_md5_challenge(client_challenge, lm_resp):
+    combined_challenge = client_challenge + lm_resp[0:16]
+    m = hashlib.md5()
+    m.update(binascii.unhexlify(combined_challenge))
+    return m.hexdigest()
+
+parser = argparse.ArgumentParser()
+parser.add_argument('--ntlmv1', help='NTLMv1 Hash in responder format', required=True)
+parser.add_argument('--hashcat', help='hashcat path, eg: ~/git/hashcat', required=False)
+parser.add_argument('--hcutils', help='hashcat-utils path, eg: ~/git/hashcat-utils', required=False)
+parser.add_argument('--json', help='if this is set to anything it will output json, eg: --json 1', required=False)
+parser.add_argument('--output', help='output to a file, specify filename', required=False)
+args = parser.parse_args()
+
+# Splitting the NTLMv1 hash field
+hashsplit = args.ntlmv1.split(':')
+challenge = hashsplit[5]
+lmresp = hashsplit[3]
+ntresp = hashsplit[4]
+ct3 = ntresp[32:48]
+data = {
+    'ntlmv1': args.ntlmv1,
+    'user': hashsplit[0],
+    'domain': hashsplit[2],
+    'challenge': challenge,
+    'lmresp': lmresp,
+    'ntresp': ntresp,
+    'ct3': ct3
+}
+
+# Processing for different LM Response Conditions
+if lmresp[20:48] != "0000000000000000000000000000":
+    ct1 = ntresp[0:16]
+    ct2 = ntresp[16:32]
+    ct3 = ntresp[32:48]
+    output_data = {
+        'hostname': hashsplit[2],
+        'username': hashsplit[0],
+        'challenge': challenge,
+        'lm_response': lmresp,
+        'nt_response': ntresp,
+        'ct1': ct1,
+        'ct2': ct2,
+        'ct3': ct3
+    }
+
+    if args.json is None:
+        print("Hash Split Data: ", str(hashsplit))
+        print("Hostname: ", hashsplit[2])
+        print("Username: ", hashsplit[0])
+        print("Challenge: ", challenge)
+        print("LM Response: ", lmresp)
+        print("NT Response: ", ntresp)
+        print("CT1: ", ct1)
+        print("CT2: ", ct2)
+        print("CT3: ", ct3)
+        print("To Calculate Final NTLM Hash:")
+        if args.hcutils:
+            print(f"{args.hcutils}/ct3_to_ntlm.bin {ct3} {challenge}")
+        else:
+            print(f"./ct3_to_ntlm.bin {ct3} {challenge}")
+        print("To crack with hashcat, use this file:")
+        print(f"echo \"{ct1}:{challenge}\" >> 14000.hash")
+        print(f"echo \"{ct2}:{challenge}\" >> 14000.hash")
+        print(f"hashcat -m 14000 -a 3 -1 {args.hashcat}/charsets/DES_full.charset --hex-charset 14000.hash ?1?1?1?1?1?1?1?1")
+
+if lmresp[20:48] == "0000000000000000000000000000":
+    clientchallenge = hashsplit[5]
+    md5hash = calc_md5_challenge(clientchallenge, lmresp)
+    srvchallenge = md5hash[0:16]
+    data['srvchallenge'] = srvchallenge
+    ct1 = ntresp[0:16]
+    ct2 = ntresp[16:32]
+
+    if args.json is None:
+        print(f"Hash response is ESS, consider using responder with --lm or --disable-ess with a static challenge of 1122334455667788")
+        print(f"Client Challenge: {clientchallenge}")
+        print(f"Combined Challenge: {clientchallenge + lmresp[0:16]}")
+        print(f"MD5 Hash of Combined Challenge: {md5hash}")
+        print(f"Server Challenge: {srvchallenge}")
+        print("To calculate final NTLM hash use:")
+        if args.hcutils:
+            print(f"{args.hcutils}/ct3_to_ntlm.bin {ct3} {clientchallenge} {lmresp}")
+        else:
+            print(f"./ct3_to_ntlm.bin {ct3} {clientchallenge} {lmresp}")
+        print("To crack with hashcat, use this file:")
+        print(f"echo \"{ct1}:{srvchallenge}\" >> 14000.hash")
+        print(f"echo \"{ct2}:{srvchallenge}\" >> 14000.hash")
+        print(f"hashcat -m 14000 -a 3 -1 {args.hashcat}/charsets/DES_full.charset --hex-charset 14000.hash ?1?1?1?1?1?1?1?1")
+
+if args.json is not None:
+    if lmresp[20:48] != "0000000000000000000000000000":
+        if args.hcutils:
+            data['ct3_crack'] = f"{args.hcutils}/ct3_to_ntlm.bin {ct3} {challenge}"
+        else:
+            data['ct3_crack'] = f"ct3_to_ntlm.bin {ct3} {challenge}"
+        data['hash1'] = f"{ct1}:{challenge}"
+        data['hash2'] = f"{ct2}:{challenge}"
+
+    if lmresp[20:48] == "0000000000000000000000000000":
+        if args.hcutils:
+            data['ct3_crack'] = f"{args.hcutils}/ct3_to_ntlm.bin {ct3} {clientchallenge} {lmresp}"
+        else:
+            data['ct3_crack'] = f"ct3_to_ntlm.bin {ct3} {clientchallenge} {lmresp}"
+        data['hash1'] = f"{ct1}:{srvchallenge}"
+        data['hash2'] = f"{ct2}:{srvchallenge}"
+
+    json_data = json.dumps(data)
+    if args.output:
+        with open(args.output, 'w') as json_file:
+            json.dump(data, json_file, indent=4)
+    else:
+        print(json_data)
+import hashlib
+import binascii
+import argparse
+import json
+import time
+import os
+
+def calc_md5_challenge(client_challenge, lm_resp):
+    combined_challenge = client_challenge + lm_resp[0:16]
+    m = hashlib.md5()
+    m.update(binascii.unhexlify(combined_challenge))
+    return m.hexdigest()
+
+parser = argparse.ArgumentParser()
+parser.add_argument('--ntlmv1', help='NTLMv1 Hash in responder format', required=True)
+parser.add_argument('--hashcat', help='hashcat path, eg: ~/git/hashcat', required=False)
+parser.add_argument('--hcutils', help='hashcat-utils path, eg: ~/git/hashcat-utils', required=False)
+parser.add_argument('--json', help='if this is set to anything it will output json, eg: --json 1', required=False)
+parser.add_argument('--output', help='output to a file, specify filename', required=False)
+args = parser.parse_args()
+
+# Splitting the NTLMv1 hash field
+hashsplit = args.ntlmv1.split(':')
+challenge = hashsplit[5]
+lmresp = hashsplit[3]
+ntresp = hashsplit[4]
+ct3 = ntresp[32:48]
+data = {
+    'ntlmv1': args.ntlmv1,
+    'user': hashsplit[0],
+    'domain': hashsplit[2],
+    'challenge': challenge,
+    'lmresp': lmresp,
+    'ntresp': ntresp,
+    'ct3': ct3
+}
+
+# Processing for different LM Response Conditions
+if lmresp[20:48] != "0000000000000000000000000000":
+    ct1 = ntresp[0:16]
+    ct2 = ntresp[16:32]
+    ct3 = ntresp[32:48]
+    output_data = {
+        'hostname': hashsplit[2],
+        'username': hashsplit[0],
+        'challenge': challenge,
+        'lm_response': lmresp,
+        'nt_response': ntresp,
+        'ct1': ct1,
+        'ct2': ct2,
+        'ct3': ct3
+    }
+
+    if args.json is None:
+        print("Hash Split Data: ", str(hashsplit))
+        print("Hostname: ", hashsplit[2])
+        print("Username: ", hashsplit[0])
+        print("Challenge: ", challenge)
+        print("LM Response: ", lmresp)
+        print("NT Response: ", ntresp)
+        print("CT1: ", ct1)
+        print("CT2: ", ct2)
+        print("CT3: ", ct3)
+        print("To Calculate Final NTLM Hash:")
+        if args.hcutils:
+            print(f"{args.hcutils}/ct3_to_ntlm.bin {ct3} {challenge}")
+        else:
+            print(f"./ct3_to_ntlm.bin {ct3} {challenge}")
+        print("To crack with hashcat, use this file:")
+        print(f"echo \"{ct1}:{challenge}\" >> 14000.hash")
+        print(f"echo \"{ct2}:{challenge}\" >> 14000.hash")
+        print(f"hashcat -m 14000 -a 3 -1 {args.hashcat}/charsets/DES_full.charset --hex-charset 14000.hash ?1?1?1?1?1?1?1?1")
+
+if lmresp[20:48] == "0000000000000000000000000000":
+    clientchallenge = hashsplit[5]
+    md5hash = calc_md5_challenge(clientchallenge, lmresp)
+    srvchallenge = md5hash[0:16]
+    data['srvchallenge'] = srvchallenge
+    ct1 = ntresp[0:16]
+    ct2 = ntresp[16:32]
+
+    if args.json is None:
+        print(f"Hash response is ESS, consider using responder with --lm or --disable-ess with a static challenge of 1122334455667788")
+        print(f"Client Challenge: {clientchallenge}")
+        print(f"Combined Challenge: {clientchallenge + lmresp[0:16]}")
+        print(f"MD5 Hash of Combined Challenge: {md5hash}")
+        print(f"Server Challenge: {srvchallenge}")
+        print("To calculate final NTLM hash use:")
+        if args.hcutils:
+            print(f"{args.hcutils}/ct3_to_ntlm.bin {ct3} {clientchallenge} {lmresp}")
+        else:
+            print(f"./ct3_to_ntlm.bin {ct3} {clientchallenge} {lmresp}")
+        print("To crack with hashcat, use this file:")
+        print(f"echo \"{ct1}:{srvchallenge}\" >> 14000.hash")
+        print(f"echo \"{ct2}:{srvchallenge}\" >> 14000.hash")
+        print(f"hashcat -m 14000 -a 3 -1 {args.hashcat}/charsets/DES_full.charset --hex-charset 14000.hash ?1?1?1?1?1?1?1?1")
+
+if args.json is not None:
+    if lmresp[20:48] != "0000000000000000000000000000":
+        if args.hcutils:
+            data['ct3_crack'] = f"{args.hcutils}/ct3_to_ntlm.bin {ct3} {challenge}"
+        else:
+            data['ct3_crack'] = f"ct3_to_ntlm.bin {ct3} {challenge}"
+        data['hash1'] = f"{ct1}:{challenge}"
+        data['hash2'] = f"{ct2}:{challenge}"
+
+    if lmresp[20:48] == "0000000000000000000000000000":
+        if args.hcutils:
+            data['ct3_crack'] = f"{args.hcutils}/ct3_to_ntlm.bin {ct3} {clientchallenge} {lmresp}"
+        else:
+            data['ct3_crack'] = f"ct3_to_ntlm.bin {ct3} {clientchallenge} {lmresp}"
+        data['hash1'] = f"{ct1}:{srvchallenge}"
+        data['hash2'] = f"{ct2}:{srvchallenge}"
+
+    json_data = json.dumps(data)
+    if args.output:
+        with open(args.output, 'w') as json_file:
+            json.dump(data, json_file, indent=4)
+    else:
+        print(json_data)
+import hashlib
+import binascii
+import argparse
+import json
+import time
+import os
+
+def calc_md5_challenge(client_challenge, lm_resp):
+    combined_challenge = client_challenge + lm_resp[0:16]
+    m = hashlib.md5()
+    m.update(binascii.unhexlify(combined_challenge))
+    return m.hexdigest()
+
+parser = argparse.ArgumentParser()
+parser.add_argument('--ntlmv1', help='NTLMv1 Hash in responder format', required=True)
+parser.add_argument('--hashcat', help='hashcat path, eg: ~/git/hashcat', required=False)
+parser.add_argument('--hcutils', help='hashcat-utils path, eg: ~/git/hashcat-utils', required=False)
+parser.add_argument('--json', help='if this is set to anything it will output json, eg: --json 1', required=False)
+parser.add_argument('--output', help='output to a file, specify filename', required=False)
+args = parser.parse_args()
+
+# Splitting the NTLMv1 hash field
+hashsplit = args.ntlmv1.split(':')
+challenge = hashsplit[5]
+lmresp = hashsplit[3]
+ntresp = hashsplit[4]
+ct3 = ntresp[32:48]
+data = {
+    'ntlmv1': args.ntlmv1,
+    'user': hashsplit[0],
+    'domain': hashsplit[2],
+    'challenge': challenge,
+    'lmresp': lmresp,
+    'ntresp': ntresp,
+    'ct3': ct3
+}
+
+# Processing for different LM Response Conditions
+if lmresp[20:48] != "0000000000000000000000000000":
+    ct1 = ntresp[0:16]
+    ct2 = ntresp[16:32]
+    ct3 = ntresp[32:48]
+    output_data = {
+        'hostname': hashsplit[2],
+        'username': hashsplit[0],
+        'challenge': challenge,
+        'lm_response': lmresp,
+        'nt_response': ntresp,
+        'ct1': ct1,
+        'ct2': ct2,
+        'ct3': ct3
+    }
+
+    if args.json is None:
+        print("Hash Split Data: ", str(hashsplit))
+        print("Hostname: ", hashsplit[2])
+        print("Username: ", hashsplit[0])
+        print("Challenge: ", challenge)
+        print("LM Response: ", lmresp)
+        print("NT Response: ", ntresp)
+        print("CT1: ", ct1)
+        print("CT2: ", ct2)
+        print("CT3: ", ct3)
+        print("To Calculate Final NTLM Hash:")
+        if args.hcutils:
+            print(f"{args.hcutils}/ct3_to_ntlm.bin {ct3} {challenge}")
+        else:
+            print(f"./ct3_to_ntlm.bin {ct3} {challenge}")
+        print("To crack with hashcat, use this file:")
+        print(f"echo \"{ct1}:{challenge}\" >> 14000.hash")
+        print(f"echo \"{ct2}:{challenge}\" >> 14000.hash")
+        print(f"hashcat -m 14000 -a 3 -1 {args.hashcat}/charsets/DES_full.charset --hex-charset 14000.hash ?1?1?1?1?1?1?1?1")
+
+if lmresp[20:48] == "0000000000000000000000000000":
+    clientchallenge = hashsplit[5]
+    md5hash = calc_md5_challenge(clientchallenge, lmresp)
+    srvchallenge = md5hash[0:16]
+    data['srvchallenge'] = srvchallenge
+    ct1 = ntresp[0:16]
+    ct2 = ntresp[16:32]
+
+    if args.json is None:
+        print(f"Hash response is ESS, consider using responder with --lm or --disable-ess with a static challenge of 1122334455667788")
+        print(f"Client Challenge: {clientchallenge}")
+        print(f"Combined Challenge: {clientchallenge + lmresp[0:16]}")
+        print(f"MD5 Hash of Combined Challenge: {md5hash}")
+        print(f"Server Challenge: {srvchallenge}")
+        print("To calculate final NTLM hash use:")
+        if args.hcutils:
+            print(f"{args.hcutils}/ct3_to_ntlm.bin {ct3} {clientchallenge} {lmresp}")
+        else:
+            print(f"./ct3_to_ntlm.bin {ct3} {clientchallenge} {lmresp}")
+        print("To crack with hashcat, use this file:")
+        print(f"echo \"{ct1}:{srvchallenge}\" >> 14000.hash")
+        print(f"echo \"{ct2}:{srvchallenge}\" >> 14000.hash")
+        print(f"hashcat -m 14000 -a 3 -1 {args.hashcat}/charsets/DES_full.charset --hex-charset 14000.hash ?1?1?1?1?1?1?1?1")
+
+if args.json is not None:
+    if lmresp[20:48] != "0000000000000000000000000000":
+        if args.hcutils:
+            data['ct3_crack'] = f"{args.hcutils}/ct3_to_ntlm.bin {ct3} {challenge}"
+        else:
+            data['ct3_crack'] = f"ct3_to_ntlm.bin {ct3} {challenge}"
+        data['hash1'] = f"{ct1}:{challenge}"
+        data['hash2'] = f"{ct2}:{challenge}"
+
+    if lmresp[20:48] == "0000000000000000000000000000":
+        if args.hcutils:
+            data['ct3_crack'] = f"{args.hcutils}/ct3_to_ntlm.bin {ct3} {clientchallenge} {lmresp}"
+        else:
+            data['ct3_crack'] = f"ct3_to_ntlm.bin {ct3} {clientchallenge} {lmresp}"
+        data['hash1'] = f"{ct1}:{srvchallenge}"
+        data['hash2'] = f"{ct2}:{srvchallenge}"
+
+    json_data = json.dumps(data)
+    if args.output:
+        with open(args.output, 'w') as json_file:
+            json.dump(data, json_file, indent=4)
+    else:
+        print(json_data)
+import hashlib
+import binascii
+import argparse
+import json
+import time
+import os
+
+def calc_md5_challenge(client_challenge, lm_resp):
+    combined_challenge = client_challenge + lm_resp[0:16]
+    m = hashlib.md5()
+    m.update(binascii.unhexlify(combined_challenge))
+    return m.hexdigest()
+
+parser = argparse.ArgumentParser()
+parser.add_argument('--ntlmv1', help='NTLMv1 Hash in responder format', required=True)
+parser.add_argument('--hashcat', help='hashcat path, eg: ~/git/hashcat', required=False)
+parser.add_argument('--hcutils', help='hashcat-utils path, eg: ~/git/hashcat-utils', required=False)
+parser.add_argument('--json', help='if this is set to anything it will output json, eg: --json 1', required=False)
+parser.add_argument('--output', help='output to a file, specify filename', required=False)
+args = parser.parse_args()
+
+# Splitting the NTLMv1 hash field
+hashsplit = args.ntlmv1.split(':')
+challenge = hashsplit[5]
+lmresp = hashsplit[3]
+ntresp = hashsplit[4]
+ct3 = ntresp[32:48]
+data = {
+    'ntlmv1': args.ntlmv1,
+    'user': hashsplit[0],
+    'domain': hashsplit[2],
+    'challenge': challenge,
+    'lmresp': lmresp,
+    'ntresp': ntresp,
+    'ct3': ct3
+}
+
+# Processing for different LM Response Conditions
+if lmresp[20:48] != "0000000000000000000000000000":
+    ct1 = ntresp[0:16]
+    ct2 = ntresp[16:32]
+    ct3 = ntresp[32:48]
+    output_data = {
+        'hostname': hashsplit[2],
+        'username': hashsplit[0],
+        'challenge': challenge,
+        'lm_response': lmresp,
+        'nt_response': ntresp,
+        'ct1': ct1,
+        'ct2': ct2,
+        'ct3': ct3
+    }
+
+    if args.json is None:
+        print("Hash Split Data: ", str(hashsplit))
+        print("Hostname: ", hashsplit[2])
+        print("Username: ", hashsplit[0])
+        print("Challenge: ", challenge)
+        print("LM Response: ", lmresp)
+        print("NT Response: ", ntresp)
+        print("CT1: ", ct1)
+        print("CT2: ", ct2)
+        print("CT3: ", ct3)
+        print("To Calculate Final NTLM Hash:")
+        if args.hcutils:
+            print(f"{args.hcutils}/ct3_to_ntlm.bin {ct3} {challenge}")
+        else:
+            print(f"./ct3_to_ntlm.bin {ct3} {challenge}")
+        print("To crack with hashcat, use this file:")
+        print(f"echo \"{ct1}:{challenge}\" >> 14000.hash")
+        print(f"echo \"{ct2}:{challenge}\" >> 14000.hash")
+        print(f"hashcat -m 14000 -a 3 -1 {args.hashcat}/charsets/DES_full.charset --hex-charset 14000.hash ?1?1?1?1?1?1?1?1")
+
+if lmresp[20:48] == "0000000000000000000000000000":
+    clientchallenge = hashsplit[5]
+    md5hash = calc_md5_challenge(clientchallenge, lmresp)
+    srvchallenge = md5hash[0:16]
+    data['srvchallenge'] = srvchallenge
+    ct1 = ntresp[0:16]
+    ct2 = ntresp[16:32]
+
+    if args.json is None:
+        print(f"Hash response is ESS, consider using responder with --lm or --disable-ess with a static challenge of 1122334455667788")
+        print(f"Client Challenge: {clientchallenge}")
+        print(f"Combined Challenge: {clientchallenge + lmresp[0:16]}")
+        print(f"MD5 Hash of Combined Challenge: {md5hash}")
+        print(f"Server Challenge: {srvchallenge}")
+        print("To calculate final NTLM hash use:")
+        if args.hcutils:
+            print(f"{args.hcutils}/ct3_to_ntlm.bin {ct3} {clientchallenge} {lmresp}")
+        else:
+            print(f"./ct3_to_ntlm.bin {ct3} {clientchallenge} {lmresp}")
+        print("To crack with hashcat, use this file:")
+        print(f"echo \"{ct1}:{srvchallenge}\" >> 14000.hash")
+        print(f"echo \"{ct2}:{srvchallenge}\" >> 14000.hash")
+        print(f"hashcat -m 14000 -a 3 -1 {args.hashcat}/charsets/DES_full.charset --hex-charset 14000.hash ?1?1?1?1?1?1?1?1")
+
+if args.json is not None:
+    if lmresp[20:48] != "0000000000000000000000000000":
+        if args.hcutils:
+            data['ct3_crack'] = f"{args.hcutils}/ct3_to_ntlm.bin {ct3} {challenge}"
+        else:
+            data['ct3_crack'] = f"ct3_to_ntlm.bin {ct3} {challenge}"
+        data['hash1'] = f"{ct1}:{challenge}"
+        data['hash2'] = f"{ct2}:{challenge}"
+
+    if lmresp[20:48] == "0000000000000000000000000000":
+        if args.hcutils:
+            data['ct3_crack'] = f"{args.hcutils}/ct3_to_ntlm.bin {ct3} {clientchallenge} {lmresp}"
+        else:
+            data['ct3_crack'] = f"ct3_to_ntlm.bin {ct3} {clientchallenge} {lmresp}"
+        data['hash1'] = f"{ct1}:{srvchallenge}"
+        data['hash2'] = f"{ct2}:{srvchallenge}"
+
+    json_data = json.dumps(data)
+    if args.output:
+        with open(args.output, 'w') as json_file:
+            json.dump(data, json_file, indent=4)
+    else:
+        print(json_data)
+import hashlib
+import binascii
+import argparse
+import json
+import time
+import os
+
+def calc_md5_challenge(client_challenge, lm_resp):
+    combined_challenge = client_challenge + lm_resp[0:16]
+    m = hashlib.md5()
+    m.update(binascii.unhexlify(combined_challenge))
+    return m.hexdigest()
+
+parser = argparse.ArgumentParser()
+parser.add_argument('--ntlmv1', help='NTLMv1 Hash in responder format', required=True)
+parser.add_argument('--hashcat', help='hashcat path, eg: ~/git/hashcat', required=False)
+parser.add_argument('--hcutils', help='hashcat-utils path, eg: ~/git/hashcat-utils', required=False)
+parser.add_argument('--json', help='if this is set to anything it will output json, eg: --json 1', required=False)
+parser.add_argument('--output', help='output to a file, specify filename', required=False)
+args = parser.parse_args()
+
+# Splitting the NTLMv1 hash field
+hashsplit = args.ntlmv1.split(':')
+challenge = hashsplit[5]
+lmresp = hashsplit[3]
+ntresp = hashsplit[4]
+ct3 = ntresp[32:48]
+data = {
+    'ntlmv1': args.ntlmv1,
+    'user': hashsplit[0],
+    'domain': hashsplit[2],
+    'challenge': challenge,
+    'lmresp': lmresp,
+    'ntresp': ntresp,
+    'ct3': ct3
+}
+
+# Processing for different LM Response Conditions
+if lmresp[20:48] != "0000000000000000000000000000":
+    ct1 = ntresp[0:16]
+    ct2 = ntresp[16:32]
+    ct3 = ntresp[32:48]
+    output_data = {
+        'hostname': hashsplit[2],
+        'username': hashsplit[0],
+        'challenge': challenge,
+        'lm_response': lmresp,
+        'nt_response': ntresp,
+        'ct1': ct1,
+        'ct2': ct2,
+        'ct3': ct3
+    }
+
+    if args.json is None:
+        print("Hash Split Data: ", str(hashsplit))
+        print("Hostname: ", hashsplit[2])
+        print("Username: ", hashsplit[0])
+        print("Challenge: ", challenge)
+        print("LM Response: ", lmresp)
+        print("NT Response: ", ntresp)
+        print("CT1: ", ct1)
+        print("CT2: ", ct2)
+        print("CT3: ", ct3)
+        print("To Calculate Final NTLM Hash:")
+        if args.hcutils:
+            print(f"{args.hcutils}/ct3_to_ntlm.bin {ct3} {challenge}")
+        else:
+            print(f"./ct3_to_ntlm.bin {ct3} {challenge}")
+        print("To crack with hashcat, use this file:")
+        print(f"echo \"{ct1}:{challenge}\" >> 14000.hash")
+        print(f"echo \"{ct2}:{challenge}\" >> 14000.hash")
+        print(f"hashcat -m 14000 -a 3 -1 {args.hashcat}/charsets/DES_full.charset --hex-charset 14000.hash ?1?1?1?1?1?1?1?1")
+
+if lmresp[20:48] == "0000000000000000000000000000":
+    clientchallenge = hashsplit[5]
+    md5hash = calc_md5_challenge(clientchallenge, lmresp)
+    srvchallenge = md5hash[0:16]
+    data['srvchallenge'] = srvchallenge
+    ct1 = ntresp[0:16]
+    ct2 = ntresp[16:32]
+
+    if args.json is None:
+        print(f"Hash response is ESS, consider using responder with --lm or --disable-ess with a static challenge of 1122334455667788")
+        print(f"Client Challenge: {clientchallenge}")
+        print(f"Combined Challenge: {clientchallenge + lmresp[0:16]}")
+        print(f"MD5 Hash of Combined Challenge: {md5hash}")
+        print(f"Server Challenge: {srvchallenge}")
+        print("To calculate final NTLM hash use:")
+        if args.hcutils:
+            print(f"{args.hcutils}/ct3_to_ntlm.bin {ct3} {clientchallenge} {lmresp}")
+        else:
+            print(f"./ct3_to_ntlm.bin {ct3} {clientchallenge} {lmresp}")
+        print("To crack with hashcat, use this file:")
+        print(f"echo \"{ct1}:{srvchallenge}\" >> 14000.hash")
+        print(f"echo \"{ct2}:{srvchallenge}\" >> 14000.hash")
+        print(f"hashcat -m 14000 -a 3 -1 {args.hashcat}/charsets/DES_full.charset --hex-charset 14000.hash ?1?1?1?1?1?1?1?1")
+
+if args.json is not None:
+    if lmresp[20:48] != "0000000000000000000000000000":
+        if args.hcutils:
+            data['ct3_crack'] = f"{args.hcutils}/ct3_to_ntlm.bin {ct3} {challenge}"
+        else:
+            data['ct3_crack'] = f"ct3_to_ntlm.bin {ct3} {challenge}"
+        data['hash1'] = f"{ct1}:{challenge}"
+        data['hash2'] = f"{ct2}:{challenge}"
+
+    if lmresp[20:48] == "0000000000000000000000000000":
+        if args.hcutils:
+            data['ct3_crack'] = f"{args.hcutils}/ct3_to_ntlm.bin {ct3} {clientchallenge} {lmresp}"
+        else:
+            data['ct3_crack'] = f"ct3_to_ntlm.bin {ct3} {clientchallenge} {lmresp}"
+        data['hash1'] = f"{ct1}:{srvchallenge}"
+        data['hash2'] = f"{ct2}:{srvchallenge}"
+
+    json_data = json.dumps(data)
+    if args.output:
+        with open(args.output, 'w') as json_file:
+            json.dump(data, json_file, indent=4)
+    else:
+        print(json_data)
+import hashlib
+import binascii
+import argparse
+import json
+import time
+import os
+
+def calc_md5_challenge(client_challenge, lm_resp):
+    combined_challenge = client_challenge + lm_resp[0:16]
+    m = hashlib.md5()
+    m.update(binascii.unhexlify(combined_challenge))
+    return m.hexdigest()
+
+parser = argparse.ArgumentParser()
+parser.add_argument('--ntlmv1', help='NTLMv1 Hash in responder format', required=True)
+parser.add_argument('--hashcat', help='hashcat path, eg: ~/git/hashcat', required=False)
+parser.add_argument('--hcutils', help='hashcat-utils path, eg: ~/git/hashcat-utils', required=False)
+parser.add_argument('--json', help='if this is set to anything it will output json, eg: --json 1', required=False)
+parser.add_argument('--output', help='output to a file, specify filename', required=False)
+args = parser.parse_args()
+
+# Splitting the NTLMv1 hash field
+hashsplit = args.ntlmv1.split(':')
+challenge = hashsplit[5]
+lmresp = hashsplit[3]
+ntresp = hashsplit[4]
+ct3 = ntresp[32:48]
+data = {
+    'ntlmv1': args.ntlmv1,
+    'user': hashsplit[0],
+    'domain': hashsplit[2],
+    'challenge': challenge,
+    'lmresp': lmresp,
+    'ntresp': ntresp,
+    'ct3': ct3
+}
+
+# Processing for different LM Response Conditions
+if lmresp[20:48] != "0000000000000000000000000000":
+    ct1 = ntresp[0:16]
+    ct2 = ntresp[16:32]
+    ct3 = ntresp[32:48]
+    output_data = {
+        'hostname': hashsplit[2],
+        'username': hashsplit[0],
+        'challenge': challenge,
+        'lm_response': lmresp,
+        'nt_response': ntresp,
+        'ct1': ct1,
+        'ct2': ct2,
+        'ct3': ct3
+    }
+
+    if args.json is None:
+        print("Hash Split Data: ", str(hashsplit))
+        print("Hostname: ", hashsplit[2])
+        print("Username: ", hashsplit[0])
+        print("Challenge: ", challenge)
+        print("LM Response: ", lmresp)
+        print("NT Response: ", ntresp)
+        print("CT1: ", ct1)
+        print("CT2: ", ct2)
+        print("CT3: ", ct3)
+        print("To Calculate Final NTLM Hash:")
+        if args.hcutils:
+            print(f"{args.hcutils}/ct3_to_ntlm.bin {ct3} {challenge}")
+        else:
+            print(f"./ct3_to_ntlm.bin {ct3} {challenge}")
+        print("To crack with hashcat, use this file:")
+        print(f"echo \"{ct1}:{challenge}\" >> 14000.hash")
+        print(f"echo \"{ct2}:{challenge}\" >> 14000.hash")
+        print(f"hashcat -m 14000 -a 3 -1 {args.hashcat}/charsets/DES_full.charset --hex-charset 14000.hash ?1?1?1?1?1?1?1?1")
+
+if lmresp[20:48] == "0000000000000000000000000000":
+    clientchallenge = hashsplit[5]
+    md5hash = calc_md5_challenge(clientchallenge, lmresp)
+    srvchallenge = md5hash[0:16]
+    data['srvchallenge'] = srvchallenge
+    ct1 = ntresp[0:16]
+    ct2 = ntresp[16:32]
+
+    if args.json is None:
+        print(f"Hash response is ESS, consider using responder with --lm or --disable-ess with a static challenge of 1122334455667788")
+        print(f"Client Challenge: {clientchallenge}")
+        print(f"Combined Challenge: {clientchallenge + lmresp[0:16]}")
+        print(f"MD5 Hash of Combined Challenge: {md5hash}")
+        print(f"Server Challenge: {srvchallenge}")
+        print("To calculate final NTLM hash use:")
+        if args.hcutils:
+            print(f"{args.hcutils}/ct3_to_ntlm.bin {ct3} {clientchallenge} {lmresp}")
+        else:
+            print(f"./ct3_to_ntlm.bin {ct3} {clientchallenge} {lmresp}")
+        print("To crack with hashcat, use this file:")
+        print(f"echo \"{ct1}:{srvchallenge}\" >> 14000.hash")
+        print(f"echo \"{ct2}:{srvchallenge}\" >> 14000.hash")
+        print(f"hashcat -m 14000 -a 3 -1 {args.hashcat}/charsets/DES_full.charset --hex-charset 14000.hash ?1?1?1?1?1?1?1?1")
+
+if args.json is not None:
+    if lmresp[20:48] != "0000000000000000000000000000":
+        if args.hcutils:
+            data['ct3_crack'] = f"{args.hcutils}/ct3_to_ntlm.bin {ct3} {challenge}"
+        else:
+            data['ct3_crack'] = f"ct3_to_ntlm.bin {ct3} {challenge}"
+        data['hash1'] = f"{ct1}:{challenge}"
+        data['hash2'] = f"{ct2}:{challenge}"
+
+    if lmresp[20:48] == "0000000000000000000000000000":
+        if args.hcutils:
+            data['ct3_crack'] = f"{args.hcutils}/ct3_to_ntlm.bin {ct3} {clientchallenge} {lmresp}"
+        else:
+            data['ct3_crack'] = f"ct3_to_ntlm.bin {ct3} {clientchallenge} {lmresp}"
+        data['hash1'] = f"{ct1}:{srvchallenge}"
+        data['hash2'] = f"{ct2}:{srvchallenge}"
+
+    json_data = json.dumps(data)
+    if args.output:
+        with open(args.output, 'w') as json_file:
+            json.dump(data, json_file, indent=4)
+    else:
+        print(json_data)
+import hashlib
+import binascii
+import argparse
+import json
+import time
+import os
+
+def calc_md5_challenge(client_challenge, lm_resp):
+    combined_challenge = client_challenge + lm_resp[0:16]
+    m = hashlib.md5()
+    m.update(binascii.unhexlify(combined_challenge))
+    return m.hexdigest()
+
+parser = argparse.ArgumentParser()
+parser.add_argument('--ntlmv1', help='NTLMv1 Hash in responder format', required=True)
+parser.add_argument('--hashcat', help='hashcat path, eg: ~/git/hashcat', required=False)
+parser.add_argument('--hcutils', help='hashcat-utils path, eg: ~/git/hashcat-utils', required=False)
+parser.add_argument('--json', help='if this is set to anything it will output json, eg: --json 1', required=False)
+parser.add_argument('--output', help='output to a file, specify filename', required=False)
+args = parser.parse_args()
+
+# Splitting the NTLMv1 hash field
+hashsplit = args.ntlmv1.split(':')
+challenge = hashsplit[5]
+lmresp = hashsplit[3]
+ntresp = hashsplit[4]
+ct3 = ntresp[32:48]
+data = {
+    'ntlmv1': args.ntlmv1,
+    'user': hashsplit[0],
+    'domain': hashsplit[2],
+    'challenge': challenge,
+    'lmresp': lmresp,
+    'ntresp': ntresp,
+    'ct3': ct3
+}
+
+# Processing for different LM Response Conditions
+if lmresp[20:48] != "0000000000000000000000000000":
+    ct1 = ntresp[0:16]
+    ct2 = ntresp[16:32]
+    ct3 = ntresp[32:48]
+    output_data = {
+        'hostname': hashsplit[2],
+        'username': hashsplit[0],
+        'challenge': challenge,
+        'lm_response': lmresp,
+        'nt_response': ntresp,
+        'ct1': ct1,
+        'ct2': ct2,
+        'ct3': ct3
+    }
+
+    if args.json is None:
+        print("Hash Split Data: ", str(hashsplit))
+        print("Hostname: ", hashsplit[2])
+        print("Username: ", hashsplit[0])
+        print("Challenge: ", challenge)
+        print("LM Response: ", lmresp)
+        print("NT Response: ", ntresp)
+        print("CT1: ", ct1)
+        print("CT2: ", ct2)
+        print("CT3: ", ct3)
+        print("To Calculate Final NTLM Hash:")
+        if args.hcutils:
+            print(f"{args.hcutils}/ct3_to_ntlm.bin {ct3} {challenge}")
+        else:
+            print(f"./ct3_to_ntlm.bin {ct3} {challenge}")
+        print("To crack with hashcat, use this file:")
+        print(f"echo \"{ct1}:{challenge}\" >> 14000.hash")
+        print(f"echo \"{ct2}:{challenge}\" >> 14000.hash")
+        print(f"hashcat -m 14000 -a 3 -1 {args.hashcat}/charsets/DES_full.charset --hex-charset 14000.hash ?1?1?1?1?1?1?1?1")
+
+if lmresp[20:48] == "0000000000000000000000000000":
+    clientchallenge = hashsplit[5]
+    md5hash = calc_md5_challenge(clientchallenge, lmresp)
+    srvchallenge = md5hash[0:16]
+    data['srvchallenge'] = srvchallenge
+    ct1 = ntresp[0:16]
+    ct2 = ntresp[16:32]
+
+    if args.json is None:
+        print(f"Hash response is ESS, consider using responder with --lm or --disable-ess with a static challenge of 1122334455667788")
+        print(f"Client Challenge: {clientchallenge}")
+        print(f"Combined Challenge: {clientchallenge + lmresp[0:16]}")
+        print(f"MD5 Hash of Combined Challenge: {md5hash}")
+        print(f"Server Challenge: {srvchallenge}")
+        print("To calculate final NTLM hash use:")
+        if args.hcutils:
+            print(f"{args.hcutils}/ct3_to_ntlm.bin {ct3} {clientchallenge} {lmresp}")
+        else:
+            print(f"./ct3_to_ntlm.bin {ct3} {clientchallenge} {lmresp}")
+        print("To crack with hashcat, use this file:")
+        print(f"echo \"{ct1}:{srvchallenge}\" >> 14000.hash")
+        print(f"echo \"{ct2}:{srvchallenge}\" >> 14000.hash")
+        print(f"hashcat -m 14000 -a 3 -1 {args.hashcat}/charsets/DES_full.charset --hex-charset 14000.hash ?1?1?1?1?1?1?1?1")
+
+if args.json is not None:
+    if lmresp[20:48] != "0000000000000000000000000000":
+        if args.hcutils:
+            data['ct3_crack'] = f"{args.hcutils}/ct3_to_ntlm.bin {ct3} {challenge}"
+        else:
+            data['ct3_crack'] = f"ct3_to_ntlm.bin {ct3} {challenge}"
+        data['hash1'] = f"{ct1}:{challenge}"
+        data['hash2'] = f"{ct2}:{challenge}"
+
+    if lmresp[20:48] == "0000000000000000000000000000":
+        if args.hcutils:
+            data['ct3_crack'] = f"{args.hcutils}/ct3_to_ntlm.bin {ct3} {clientchallenge} {lmresp}"
+        else:
+            data['ct3_crack'] = f"ct3_to_ntlm.bin {ct3} {clientchallenge} {lmresp}"
+        data['hash1'] = f"{ct1}:{srvchallenge}"
+        data['hash2'] = f"{ct2}:{srvchallenge}"
+
+    json_data = json.dumps(data)
+    if args.output:
+        with open(args.output, 'w') as json_file:
+            json.dump(data, json_file, indent=4)
+    else:
+        print(json_data)
+import hashlib
+import binascii
+import argparse
+import json
+import time
+import os
+
+def calc_md5_challenge(client_challenge, lm_resp):
+    combined_challenge = client_challenge + lm_resp[0:16]
+    m = hashlib.md5()
+    m.update(binascii.unhexlify(combined_challenge))
+    return m.hexdigest()
+
+parser = argparse.ArgumentParser()
+parser.add_argument('--ntlmv1', help='NTLMv1 Hash in responder format', required=True)
+parser.add_argument('--hashcat', help='hashcat path, eg: ~/git/hashcat', required=False)
+parser.add_argument('--hcutils', help='hashcat-utils path, eg: ~/git/hashcat-utils', required=False)
+parser.add_argument('--json', help='if this is set to anything it will output json, eg: --json 1', required=False)
+parser.add_argument('--output', help='output to a file, specify filename', required=False)
+args = parser.parse_args()
+
+# Splitting the NTLMv1 hash field
+hashsplit = args.ntlmv1.split(':')
+challenge = hashsplit[5]
+lmresp = hashsplit[3]
+ntresp = hashsplit[4]
+ct3 = ntresp[32:48]
+data = {
+    'ntlmv1': args.ntlmv1,
+    'user': hashsplit[0],
+    'domain': hashsplit[2],
+    'challenge': challenge,
+    'lmresp': lmresp,
+    'ntresp': ntresp,
+    'ct3': ct3
+}
+
+# Processing for different LM Response Conditions
+if lmresp[20:48] != "0000000000000000000000000000":
+    ct1 = ntresp[0:16]
+    ct2 = ntresp[16:32]
+    ct3 = ntresp[32:48]
+    output_data = {
+        'hostname': hashsplit[2],
+        'username': hashsplit[0],
+        'challenge': challenge,
+        'lm_response': lmresp,
+        'nt_response': ntresp,
+        'ct1': ct1,
+        'ct2': ct2,
+        'ct3': ct3
+    }
+
+    if args.json is None:
+        print("Hash Split Data: ", str(hashsplit))
+        print("Hostname: ", hashsplit[2])
+        print("Username: ", hashsplit[0])
+        print("Challenge: ", challenge)
+        print("LM Response: ", lmresp)
+        print("NT Response: ", ntresp)
+        print("CT1: ", ct1)
+        print("CT2: ", ct2)
+        print("CT3: ", ct3)
+        print("To Calculate Final NTLM Hash:")
+        if args.hcutils:
+            print(f"{args.hcutils}/ct3_to_ntlm.bin {ct3} {challenge}")
+        else:
+            print(f"./ct3_to_ntlm.bin {ct3} {challenge}")
+        print("To crack with hashcat, use this file:")
+        print(f"echo \"{ct1}:{challenge}\" >> 14000.hash")
+        print(f"echo \"{ct2}:{challenge}\" >> 14000.hash")
+        print(f"hashcat -m 14000 -a 3 -1 {args.hashcat}/charsets/DES_full.charset --hex-charset 14000.hash ?1?1?1?1?1?1?1?1")
+
+if lmresp[20:48] == "0000000000000000000000000000":
+    clientchallenge = hashsplit[5]
+    md5hash = calc_md5_challenge(clientchallenge, lmresp)
+    srvchallenge = md5hash[0:16]
+    data['srvchallenge'] = srvchallenge
+    ct1 = ntresp[0:16]
+    ct2 = ntresp[16:32]
+
+    if args.json is None:
+        print(f"Hash response is ESS, consider using responder with --lm or --disable-ess with a static challenge of 1122334455667788")
+        print(f"Client Challenge: {clientchallenge}")
+        print(f"Combined Challenge: {clientchallenge + lmresp[0:16]}")
+        print(f"MD5 Hash of Combined Challenge: {md5hash}")
+        print(f"Server Challenge: {srvchallenge}")
+        print("To calculate final NTLM hash use:")
+        if args.hcutils:
+            print(f"{args.hcutils}/ct3_to_ntlm.bin {ct3} {clientchallenge} {lmresp}")
+        else:
+            print(f"./ct3_to_ntlm.bin {ct3} {clientchallenge} {lmresp}")
+        print("To crack with hashcat, use this file:")
+        print(f"echo \"{ct1}:{srvchallenge}\" >> 14000.hash")
+        print(f"echo \"{ct2}:{srvchallenge}\" >> 14000.hash")
+        print(f"hashcat -m 14000 -a 3 -1 {args.hashcat}/charsets/DES_full.charset --hex-charset 14000.hash ?1?1?1?1?1?1?1?1")
+
+if args.json is not None:
+    if lmresp[20:48] != "0000000000000000000000000000":
+        if args.hcutils:
+            data['ct3_crack'] = f"{args.hcutils}/ct3_to_ntlm.bin {ct3} {challenge}"
+        else:
+            data['ct3_crack'] = f"ct3_to_ntlm.bin {ct3} {challenge}"
+        data['hash1'] = f"{ct1}:{challenge}"
+        data['hash2'] = f"{ct2}:{challenge}"
+
+    if lmresp[20:48] == "0000000000000000000000000000":
+        if args.hcutils:
+            data['ct3_crack'] = f"{args.hcutils}/ct3_to_ntlm.bin {ct3} {clientchallenge} {lmresp}"
+        else:
+            data['ct3_crack'] = f"ct3_to_ntlm.bin {ct3} {clientchallenge} {lmresp}"
+        data['hash1'] = f"{ct1}:{srvchallenge}"
+        data['hash2'] = f"{ct2}:{srvchallenge}"
+
+    json_data = json.dumps(data)
+    if args.output:
+        with open(args.output, 'w') as json_file:
+            json.dump(data, json_file, indent=4)
+    else:
+        print(json_data)
+import hashlib
+import binascii
+import argparse
+import json
+import time
+import os
+
+def calc_md5_challenge(client_challenge, lm_resp):
+    combined_challenge = client_challenge + lm_resp[0:16]
+    m = hashlib.md5()
+    m.update(binascii.unhexlify(combined_challenge))
+    return m.hexdigest()
+
+parser = argparse.ArgumentParser()
+parser.add_argument('--ntlmv1', help='NTLMv1 Hash in responder format', required=True)
+parser.add_argument('--hashcat', help='hashcat path, eg: ~/git/hashcat', required=False)
+parser.add_argument('--hcutils', help='hashcat-utils path, eg: ~/git/hashcat-utils', required=False)
+parser.add_argument('--json', help='if this is set to anything it will output json, eg: --json 1', required=False)
+parser.add_argument('--output', help='output to a file, specify filename', required=False)
+args = parser.parse_args()
+
+# Splitting the NTLMv1 hash field
+hashsplit = args.ntlmv1.split(':')
+challenge = hashsplit[5]
+lmresp = hashsplit[3]
+ntresp = hashsplit[4]
+ct3 = ntresp[32:48]
+data = {
+    'ntlmv1': args.ntlmv1,
+    'user': hashsplit[0],
+    'domain': hashsplit[2],
+    'challenge': challenge,
+    'lmresp': lmresp,
+    'ntresp': ntresp,
+    'ct3': ct3
+}
+
+# Processing for different LM Response Conditions
+if lmresp[20:48] != "0000000000000000000000000000":
+    ct1 = ntresp[0:16]
+    ct2 = ntresp[16:32]
+    ct3 = ntresp[32:48]
+    output_data = {
+        'hostname': hashsplit[2],
+        'username': hashsplit[0],
+        'challenge': challenge,
+        'lm_response': lmresp,
+        'nt_response': ntresp,
+        'ct1': ct1,
+        'ct2': ct2,
+        'ct3': ct3
+    }
+
+    if args.json is None:
+        print("Hash Split Data: ", str(hashsplit))
+        print("Hostname: ", hashsplit[2])
+        print("Username: ", hashsplit[0])
+        print("Challenge: ", challenge)
+        print("LM Response: ", lmresp)
+        print("NT Response: ", ntresp)
+        print("CT1: ", ct1)
+        print("CT2: ", ct2)
+        print("CT3: ", ct3)
+        print("To Calculate Final NTLM Hash:")
+        if args.hcutils:
+            print(f"{args.hcutils}/ct3_to_ntlm.bin {ct3} {challenge}")
+        else:
+            print(f"./ct3_to_ntlm.bin {ct3} {challenge}")
+        print("To crack with hashcat, use this file:")
+        print(f"echo \"{ct1}:{challenge}\" >> 14000.hash")
+        print(f"echo \"{ct2}:{challenge}\" >> 14000.hash")
+        print(f"hashcat -m 14000 -a 3 -1 {args.hashcat}/charsets/DES_full.charset --hex-charset 14000.hash ?1?1?1?1?1?1?1?1")
+
+if lmresp[20:48] == "0000000000000000000000000000":
+    clientchallenge = hashsplit[5]
+    md5hash = calc_md5_challenge(clientchallenge, lmresp)
+    srvchallenge = md5hash[0:16]
+    data['srvchallenge'] = srvchallenge
+    ct1 = ntresp[0:16]
+    ct2 = ntresp[16:32]
+
+    if args.json is None:
+        print(f"Hash response is ESS, consider using responder with --lm or --disable-ess with a static challenge of 1122334455667788")
+        print(f"Client Challenge: {clientchallenge}")
+        print(f"Combined Challenge: {clientchallenge + lmresp[0:16]}")
+        print(f"MD5 Hash of Combined Challenge: {md5hash}")
+        print(f"Server Challenge: {srvchallenge}")
+        print("To calculate final NTLM hash use:")
+        if args.hcutils:
+            print(f"{args.hcutils}/ct3_to_ntlm.bin {ct3} {clientchallenge} {lmresp}")
+        else:
+            print(f"./ct3_to_ntlm.bin {ct3} {clientchallenge} {lmresp}")
+        print("To crack with hashcat, use this file:")
+        print(f"echo \"{ct1}:{srvchallenge}\" >> 14000.hash")
+        print(f"echo \"{ct2}:{srvchallenge}\" >> 14000.hash")
+        print(f"hashcat -m 14000 -a 3 -1 {args.hashcat}/charsets/DES_full.charset --hex-charset 14000.hash ?1?1?1?1?1?1?1?1")
+
+if args.json is not None:
+    if lmresp[20:48] != "0000000000000000000000000000":
+        if args.hcutils:
+            data['ct3_crack'] = f"{args.hcutils}/ct3_to_ntlm.bin {ct3} {challenge}"
+        else:
+            data['ct3_crack'] = f"ct3_to_ntlm.bin {ct3} {challenge}"
+        data['hash1'] = f"{ct1}:{challenge}"
+        data['hash2'] = f"{ct2}:{challenge}"
+
+    if lmresp[20:48] == "0000000000000000000000000000":
+        if args.hcutils:
+            data['ct3_crack'] = f"{args.hcutils}/ct3_to_ntlm.bin {ct3} {clientchallenge} {lmresp}"
+        else:
+            data['ct3_crack'] = f"ct3_to_ntlm.bin {ct3} {clientchallenge} {lmresp}"
+        data['hash1'] = f"{ct1}:{srvchallenge}"
+        data['hash2'] = f"{ct2}:{srvchallenge}"
+
+    json_data = json.dumps(data)
+    if args.output:
+        with open(args.output, 'w') as json_file:
+            json.dump(data, json_file, indent=4)
+    else:
+        print(json_data)
+import hashlib
+import binascii
+import argparse
+import json
+import time
+import os
+
+def calc_md5_challenge(client_challenge, lm_resp):
+    combined_challenge = client_challenge + lm_resp[0:16]
+    m = hashlib.md5()
+    m.update(binascii.unhexlify(combined_challenge))
+    return m.hexdigest()
+
+parser = argparse.ArgumentParser()
+parser.add_argument('--ntlmv1', help='NTLMv1 Hash in responder format', required=True)
+parser.add_argument('--hashcat', help='hashcat path, eg: ~/git/hashcat', required=False)
+parser.add_argument('--hcutils', help='hashcat-utils path, eg: ~/git/hashcat-utils', required=False)
+parser.add_argument('--json', help='if this is set to anything it will output json, eg: --json 1', required=False)
+parser.add_argument('--output', help='output to a file, specify filename', required=False)
+args = parser.parse_args()
+
+# Splitting the NTLMv1 hash field
+hashsplit = args.ntlmv1.split(':')
+challenge = hashsplit[5]
+lmresp = hashsplit[3]
+ntresp = hashsplit[4]
+ct3 = ntresp[32:48]
+data = {
+    'ntlmv1': args.ntlmv1,
+    'user': hashsplit[0],
+    'domain': hashsplit[2],
+    'challenge': challenge,
+    'lmresp': lmresp,
+    'ntresp': ntresp,
+    'ct3': ct3
+}
+
+# Processing for different LM Response Conditions
+if lmresp[20:48] != "0000000000000000000000000000":
+    ct1 = ntresp[0:16]
+    ct2 = ntresp[16:32]
+    ct3 = ntresp[32:48]
+    output_data = {
+        'hostname': hashsplit[2],
+        'username': hashsplit[0],
+        'challenge': challenge,
+        'lm_response': lmresp,
+        'nt_response': ntresp,
+        'ct1': ct1,
+        'ct2': ct2,
+        'ct3': ct3
+    }
+
+    if args.json is None:
+        print("Hash Split Data: ", str(hashsplit))
+        print("Hostname: ", hashsplit[2])
+        print("Username: ", hashsplit[0])
+        print("Challenge: ", challenge)
+        print("LM Response: ", lmresp)
+        print("NT Response: ", ntresp)
+        print("CT1: ", ct1)
+        print("CT2: ", ct2)
+        print("CT3: ", ct3)
+        print("To Calculate Final NTLM Hash:")
+        if args.hcutils:
+            print(f"{args.hcutils}/ct3_to_ntlm.bin {ct3} {challenge}")
+        else:
+            print(f"./ct3_to_ntlm.bin {ct3} {challenge}")
+        print("To crack with hashcat, use this file:")
+        print(f"echo \"{ct1}:{challenge}\" >> 14000.hash")
+        print(f"echo \"{ct2}:{challenge}\" >> 14000.hash")
+        print(f"hashcat -m 14000 -a 3 -1 {args.hashcat}/charsets/DES_full.charset --hex-charset 14000.hash ?1?1?1?1?1?1?1?1")
+
+if lmresp[20:48] == "0000000000000000000000000000":
+    clientchallenge = hashsplit[5]
+    md5hash = calc_md5_challenge(clientchallenge, lmresp)
+    srvchallenge = md5hash[0:16]
+    data['srvchallenge'] = srvchallenge
+    ct1 = ntresp[0:16]
+    ct2 = ntresp[16:32]
+
+    if args.json is None:
+        print(f"Hash response is ESS, consider using responder with --lm or --disable-ess with a static challenge of 1122334455667788")
+        print(f"Client Challenge: {clientchallenge}")
+        print(f"Combined Challenge: {clientchallenge + lmresp[0:16]}")
+        print(f"MD5 Hash of Combined Challenge: {md5hash}")
+        print(f"Server Challenge: {srvchallenge}")
+        print("To calculate final NTLM hash use:")
+        if args.hcutils:
+            print(f"{args.hcutils}/ct3_to_ntlm.bin {ct3} {clientchallenge} {lmresp}")
+        else:
+            print(f"./ct3_to_ntlm.bin {ct3} {clientchallenge} {lmresp}")
+        print("To crack with hashcat, use this file:")
+        print(f"echo \"{ct1}:{srvchallenge}\" >> 14000.hash")
+        print(f"echo \"{ct2}:{srvchallenge}\" >> 14000.hash")
+        print(f"hashcat -m 14000 -a 3 -1 {args.hashcat}/charsets/DES_full.charset --hex-charset 14000.hash ?1?1?1?1?1?1?1?1")
+
+if args.json is not None:
+    if lmresp[20:48] != "0000000000000000000000000000":
+        if args.hcutils:
+            data['ct3_crack'] = f"{args.hcutils}/ct3_to_ntlm.bin {ct3} {challenge}"
+        else:
+            data['ct3_crack'] = f"ct3_to_ntlm.bin {ct3} {challenge}"
+        data['hash1'] = f"{ct1}:{challenge}"
+        data['hash2'] = f"{ct2}:{challenge}"
+
+    if lmresp[20:48] == "0000000000000000000000000000":
+        if args.hcutils:
+            data['ct3_crack'] = f"{args.hcutils}/ct3_to_ntlm.bin {ct3} {clientchallenge} {lmresp}"
+        else:
+            data['ct3_crack'] = f"ct3_to_ntlm.bin {ct3} {clientchallenge} {lmresp}"
+        data['hash1'] = f"{ct1}:{srvchallenge}"
+        data['hash2'] = f"{ct2}:{srvchallenge}"
+
+    json_data = json.dumps(data)
+    if args.output:
+        with open(args.output, 'w') as json_file:
+            json.dump(data, json_file, indent=4)
+    else:
+        print(json_data)
+import hashlib
+import binascii
+import argparse
+import json
+import time
+import os
+
+def calc_md5_challenge(client_challenge, lm_resp):
+    combined_challenge = client_challenge + lm_resp[0:16]
+    m = hashlib.md5()
+    m.update(binascii.unhexlify(combined_challenge))
+    return m.hexdigest()
+
+parser = argparse.ArgumentParser()
+parser.add_argument('--ntlmv1', help='NTLMv1 Hash in responder format', required=True)
+parser.add_argument('--hashcat', help='hashcat path, eg: ~/git/hashcat', required=False)
+parser.add_argument('--hcutils', help='hashcat-utils path, eg: ~/git/hashcat-utils', required=False)
+parser.add_argument('--json', help='if this is set to anything it will output json, eg: --json 1', required=False)
+parser.add_argument('--output', help='output to a file, specify filename', required=False)
+args = parser.parse_args()
+
+# Splitting the NTLMv1 hash field
+hashsplit = args.ntlmv1.split(':')
+challenge = hashsplit[5]
+lmresp = hashsplit[3]
+ntresp = hashsplit[4]
+ct3 = ntresp[32:48]
+data = {
+    'ntlmv1': args.ntlmv1,
+    'user': hashsplit[0],
+    'domain': hashsplit[2],
+    'challenge': challenge,
+    'lmresp': lmresp,
+    'ntresp': ntresp,
+    'ct3': ct3
+}
+
+# Processing for different LM Response Conditions
+if lmresp[20:48] != "0000000000000000000000000000":
+    ct1 = ntresp[0:16]
+    ct2 = ntresp[16:32]
+    ct3 = ntresp[32:48]
+    output_data = {
+        'hostname': hashsplit[2],
+        'username': hashsplit[0],
+        'challenge': challenge,
+        'lm_response': lmresp,
+        'nt_response': ntresp,
+        'ct1': ct1,
+        'ct2': ct2,
+        'ct3': ct3
+    }
+
+    if args.json is None:
+        print("Hash Split Data: ", str(hashsplit))
+        print("Hostname: ", hashsplit[2])
+        print("Username: ", hashsplit[0])
+        print("Challenge: ", challenge)
+        print("LM Response: ", lmresp)
+        print("NT Response: ", ntresp)
+        print("CT1: ", ct1)
+        print("CT2: ", ct2)
+        print("CT3: ", ct3)
+        print("To Calculate Final NTLM Hash:")
+        if args.hcutils:
+            print(f"{args.hcutils}/ct3_to_ntlm.bin {ct3} {challenge}")
+        else:
+            print(f"./ct3_to_ntlm.bin {ct3} {challenge}")
+        print("To crack with hashcat, use this file:")
+        print(f"echo \"{ct1}:{challenge}\" >> 14000.hash")
+        print(f"echo \"{ct2}:{challenge}\" >> 14000.hash")
+        print(f"hashcat -m 14000 -a 3 -1 {args.hashcat}/charsets/DES_full.charset --hex-charset 14000.hash ?1?1?1?1?1?1?1?1")
+
+if lmresp[20:48] == "0000000000000000000000000000":
+    clientchallenge = hashsplit[5]
+    md5hash = calc_md5_challenge(clientchallenge, lmresp)
+    srvchallenge = md5hash[0:16]
+    data['srvchallenge'] = srvchallenge
+    ct1 = ntresp[0:16]
+    ct2 = ntresp[16:32]
+
+    if args.json is None:
+        print(f"Hash response is ESS, consider using responder with --lm or --disable-ess with a static challenge of 1122334455667788")
+        print(f"Client Challenge: {clientchallenge}")
+        print(f"Combined Challenge: {clientchallenge + lmresp[0:16]}")
+        print(f"MD5 Hash of Combined Challenge: {md5hash}")
+        print(f"Server Challenge: {srvchallenge}")
+        print("To calculate final NTLM hash use:")
+        if args.hcutils:
+            print(f"{args.hcutils}/ct3_to_ntlm.bin {ct3} {clientchallenge} {lmresp}")
+        else:
+            print(f"./ct3_to_ntlm.bin {ct3} {clientchallenge} {lmresp}")
+        print("To crack with hashcat, use this file:")
+        print(f"echo \"{ct1}:{srvchallenge}\" >> 14000.hash")
+        print(f"echo \"{ct2}:{srvchallenge}\" >> 14000.hash")
+        print(f"hashcat -m 14000 -a 3 -1 {args.hashcat}/charsets/DES_full.charset --hex-charset 14000.hash ?1?1?1?1?1?1?1?1")
+
+if args.json is not None:
+    if lmresp[20:48] != "0000000000000000000000000000":
+        if args.hcutils:
+            data['ct3_crack'] = f"{args.hcutils}/ct3_to_ntlm.bin {ct3} {challenge}"
+        else:
+            data['ct3_crack'] = f"ct3_to_ntlm.bin {ct3} {challenge}"
+        data['hash1'] = f"{ct1}:{challenge}"
+        data['hash2'] = f"{ct2}:{challenge}"
+
+    if lmresp[20:48] == "0000000000000000000000000000":
+        if args.hcutils:
+            data['ct3_crack'] = f"{args.hcutils}/ct3_to_ntlm.bin {ct3} {clientchallenge} {lmresp}"
+        else:
+            data['ct3_crack'] = f"ct3_to_ntlm.bin {ct3} {clientchallenge} {lmresp}"
+        data['hash1'] = f"{ct1}:{srvchallenge}"
+        data['hash2'] = f"{ct2}:{srvchallenge}"
+
+    json_data = json.dumps(data)
+    if args.output:
+        with open(args.output, 'w') as json_file:
+            json.dump(data, json_file, indent=4)
+    else:
+        print(json_data)
+import hashlib
+import binascii
+import argparse
+import json
+import time
+import os
+
+def calc_md5_challenge(client_challenge, lm_resp):
+    combined_challenge = client_challenge + lm_resp[0:16]
+    m = hashlib.md5()
+    m.update(binascii.unhexlify(combined_challenge))
+    return m.hexdigest()
+
+parser = argparse.ArgumentParser()
+parser.add_argument('--ntlmv1', help='NTLMv1 Hash in responder format', required=True)
+parser.add_argument('--hashcat', help='hashcat path, eg: ~/git/hashcat', required=False)
+parser.add_argument('--hcutils', help='hashcat-utils path, eg: ~/git/hashcat-utils', required=False)
+parser.add_argument('--json', help='if this is set to anything it will output json, eg: --json 1', required=False)
+parser.add_argument('--output', help='output to a file, specify filename', required=False)
+args = parser.parse_args()
+
+# Splitting the NTLMv1 hash field
+hashsplit = args.ntlmv1.split(':')
+challenge = hashsplit[5]
+lmresp = hashsplit[3]
+ntresp = hashsplit[4]
+ct3 = ntresp[32:48]
+data = {
+    'ntlmv1': args.ntlmv1,
+    'user': hashsplit[0],
+    'domain': hashsplit[2],
+    'challenge': challenge,
+    'lmresp': lmresp,
+    'ntresp': ntresp,
+    'ct3': ct3
+}
+
+# Processing for different LM Response Conditions
+if lmresp[20:48] != "0000000000000000000000000000":
+    ct1 = ntresp[0:16]
+    ct2 = ntresp[16:32]
+    ct3 = ntresp[32:48]
+    output_data = {
+        'hostname': hashsplit[2],
+        'username': hashsplit[0],
+        'challenge': challenge,
+        'lm_response': lmresp,
+        'nt_response': ntresp,
+        'ct1': ct1,
+        'ct2': ct2,
+        'ct3': ct3
+    }
+
+    if args.json is None:
+        print("Hash Split Data: ", str(hashsplit))
+        print("Hostname: ", hashsplit[2])
+        print("Username: ", hashsplit[0])
+        print("Challenge: ", challenge)
+        print("LM Response: ", lmresp)
+        print("NT Response: ", ntresp)
+        print("CT1: ", ct1)
+        print("CT2: ", ct2)
+        print("CT3: ", ct3)
+        print("To Calculate Final NTLM Hash:")
+        if args.hcutils:
+            print(f"{args.hcutils}/ct3_to_ntlm.bin {ct3} {challenge}")
+        else:
+            print(f"./ct3_to_ntlm.bin {ct3} {challenge}")
+        print("To crack with hashcat, use this file:")
+        print(f"echo \"{ct1}:{challenge}\" >> 14000.hash")
+        print(f"echo \"{ct2}:{challenge}\" >> 14000.hash")
+        print(f"hashcat -m 14000 -a 3 -1 {args.hashcat}/charsets/DES_full.charset --hex-charset 14000.hash ?1?1?1?1?1?1?1?1")
+
+if lmresp[20:48] == "0000000000000000000000000000":
+    clientchallenge = hashsplit[5]
+    md5hash = calc_md5_challenge(clientchallenge, lmresp)
+    srvchallenge = md5hash[0:16]
+    data['srvchallenge'] = srvchallenge
+    ct1 = ntresp[0:16]
+    ct2 = ntresp[16:32]
+
+    if args.json is None:
+        print(f"Hash response is ESS, consider using responder with --lm or --disable-ess with a static challenge of 1122334455667788")
+        print(f"Client Challenge: {clientchallenge}")
+        print(f"Combined Challenge: {clientchallenge + lmresp[0:16]}")
+        print(f"MD5 Hash of Combined Challenge: {md5hash}")
+        print(f"Server Challenge: {srvchallenge}")
+        print("To calculate final NTLM hash use:")
+        if args.hcutils:
+            print(f"{args.hcutils}/ct3_to_ntlm.bin {ct3} {clientchallenge} {lmresp}")
+        else:
+            print(f"./ct3_to_ntlm.bin {ct3} {clientchallenge} {lmresp}")
+        print("To crack with hashcat, use this file:")
+        print(f"echo \"{ct1}:{srvchallenge}\" >> 14000.hash")
+        print(f"echo \"{ct2}:{srvchallenge}\" >> 14000.hash")
+        print(f"hashcat -m 14000 -a 3 -1 {args.hashcat}/charsets/DES_full.charset --hex-charset 14000.hash ?1?1?1?1?1?1?1?1")
+
+if args.json is not None:
+    if lmresp[20:48] != "0000000000000000000000000000":
+        if args.hcutils:
+            data['ct3_crack'] = f"{args.hcutils}/ct3_to_ntlm.bin {ct3} {challenge}"
+        else:
+            data['ct3_crack'] = f"ct3_to_ntlm.bin {ct3} {challenge}"
+        data['hash1'] = f"{ct1}:{challenge}"
+        data['hash2'] = f"{ct2}:{challenge}"
+
+    if lmresp[20:48] == "0000000000000000000000000000":
+        if args.hcutils:
+            data['ct3_crack'] = f"{args.hcutils}/ct3_to_ntlm.bin {ct3} {clientchallenge} {lmresp}"
+        else:
+            data['ct3_crack'] = f"ct3_to_ntlm.bin {ct3} {clientchallenge} {lmresp}"
+        data['hash1'] = f"{ct1}:{srvchallenge}"
+        data['hash2'] = f"{ct2}:{srvchallenge}"
+
+    json_data = json.dumps(data)
+    if args.output:
+        with open(args.output, 'w') as json_file:
+            json.dump(data, json_file, indent=4)
+    else:
+        print(json_data)
+import hashlib
+import binascii
+import argparse
+import json
+import time
+import os
+
+def calc_md5_challenge(client_challenge, lm_resp):
+    combined_challenge = client_challenge + lm_resp[0:16]
+    m = hashlib.md5()
+    m.update(binascii.unhexlify(combined_challenge))
+    return m.hexdigest()
+
+parser = argparse.ArgumentParser()
+parser.add_argument('--ntlmv1', help='NTLMv1 Hash in responder format', required=True)
+parser.add_argument('--hashcat', help='hashcat path, eg: ~/git/hashcat', required=False)
+parser.add_argument('--hcutils', help='hashcat-utils path, eg: ~/git/hashcat-utils', required=False)
+parser.add_argument('--json', help='if this is set to anything it will output json, eg: --json 1', required=False)
+parser.add_argument('--output', help='output to a file, specify filename', required=False)
+args = parser.parse_args()
+
+# Splitting the NTLMv1 hash field
+hashsplit = args.ntlmv1.split(':')
+challenge = hashsplit[5]
+lmresp = hashsplit[3]
+ntresp = hashsplit[4]
+ct3 = ntresp[32:48]
+data = {
+    'ntlmv1': args.ntlmv1,
+    'user': hashsplit[0],
+    'domain': hashsplit[2],
+    'challenge': challenge,
+    'lmresp': lmresp,
+    'ntresp': ntresp,
+    'ct3': ct3
+}
+
+# Processing for different LM Response Conditions
+if lmresp[20:48] != "0000000000000000000000000000":
+    ct1 = ntresp[0:16]
+    ct2 = ntresp[16:32]
+    ct3 = ntresp[32:48]
+    output_data = {
+        'hostname': hashsplit[2],
+        'username': hashsplit[0],
+        'challenge': challenge,
+        'lm_response': lmresp,
+        'nt_response': ntresp,
+        'ct1': ct1,
+        'ct2': ct2,
+        'ct3': ct3
+    }
+
+    if args.json is None:
+        print("Hash Split Data: ", str(hashsplit))
+        print("Hostname: ", hashsplit[2])
+        print("Username: ", hashsplit[0])
+        print("Challenge: ", challenge)
+        print("LM Response: ", lmresp)
+        print("NT Response: ", ntresp)
+        print("CT1: ", ct1)
+        print("CT2: ", ct2)
+        print("CT3: ", ct3)
+        print("To Calculate Final NTLM Hash:")
+        if args.hcutils:
+            print(f"{args.hcutils}/ct3_to_ntlm.bin {ct3} {challenge}")
+        else:
+            print(f"./ct3_to_ntlm.bin {ct3} {challenge}")
+        print("To crack with hashcat, use this file:")
+        print(f"echo \"{ct1}:{challenge}\" >> 14000.hash")
+        print(f"echo \"{ct2}:{challenge}\" >> 14000.hash")
+        print(f"hashcat -m 14000 -a 3 -1 {args.hashcat}/charsets/DES_full.charset --hex-charset 14000.hash ?1?1?1?1?1?1?1?1")
+
+if lmresp[20:48] == "0000000000000000000000000000":
+    clientchallenge = hashsplit[5]
+    md5hash = calc_md5_challenge(clientchallenge, lmresp)
+    srvchallenge = md5hash[0:16]
+    data['srvchallenge'] = srvchallenge
+    ct1 = ntresp[0:16]
+    ct2 = ntresp[16:32]
+
+    if args.json is None:
+        print(f"Hash response is ESS, consider using responder with --lm or --disable-ess with a static challenge of 1122334455667788")
+        print(f"Client Challenge: {clientchallenge}")
+        print(f"Combined Challenge: {clientchallenge + lmresp[0:16]}")
+        print(f"MD5 Hash of Combined Challenge: {md5hash}")
+        print(f"Server Challenge: {srvchallenge}")
+        print("To calculate final NTLM hash use:")
+        if args.hcutils:
+            print(f"{args.hcutils}/ct3_to_ntlm.bin {ct3} {clientchallenge} {lmresp}")
+        else:
+            print(f"./ct3_to_ntlm.bin {ct3} {clientchallenge} {lmresp}")
+        print("To crack with hashcat, use this file:")
+        print(f"echo \"{ct1}:{srvchallenge}\" >> 14000.hash")
+        print(f"echo \"{ct2}:{srvchallenge}\" >> 14000.hash")
+        print(f"hashcat -m 14000 -a 3 -1 {args.hashcat}/charsets/DES_full.charset --hex-charset 14000.hash ?1?1?1?1?1?1?1?1")
+
+if args.json is not None:
+    if lmresp[20:48] != "0000000000000000000000000000":
+        if args.hcutils:
+            data['ct3_crack'] = f"{args.hcutils}/ct3_to_ntlm.bin {ct3} {challenge}"
+        else:
+            data['ct3_crack'] = f"ct3_to_ntlm.bin {ct3} {challenge}"
+        data['hash1'] = f"{ct1}:{challenge}"
+        data['hash2'] = f"{ct2}:{challenge}"
+
+    if lmresp[20:48] == "0000000000000000000000000000":
+        if args.hcutils:
+            data['ct3_crack'] = f"{args.hcutils}/ct3_to_ntlm.bin {ct3} {clientchallenge} {lmresp}"
+        else:
+            data['ct3_crack'] = f"ct3_to_ntlm.bin {ct3} {clientchallenge} {lmresp}"
+        data['hash1'] = f"{ct1}:{srvchallenge}"
+        data['hash2'] = f"{ct2}:{srvchallenge}"
+
+    json_data = json.dumps(data)
+    if args.output:
+        with open(args.output, 'w') as json_file:
+            json.dump(data, json_file, indent=4)
+    else:
+        print(json_data)
+import hashlib
+import binascii
+import argparse
+import json
+import time
+import os
+
+def calc_md5_challenge(client_challenge, lm_resp):
+    combined_challenge = client_challenge + lm_resp[0:16]
+    m = hashlib.md5()
+    m.update(binascii.unhexlify(combined_challenge))
+    return m.hexdigest()
+
+parser = argparse.ArgumentParser()
+parser.add_argument('--ntlmv1', help='NTLMv1 Hash in responder format', required=True)
+parser.add_argument('--hashcat', help='hashcat path, eg: ~/git/hashcat', required=False)
+parser.add_argument('--hcutils', help='hashcat-utils path, eg: ~/git/hashcat-utils', required=False)
+parser.add_argument('--json', help='if this is set to anything it will output json, eg: --json 1', required=False)
+parser.add_argument('--output', help='output to a file, specify filename', required=False)
+args = parser.parse_args()
+
+# Splitting the NTLMv1 hash field
+hashsplit = args.ntlmv1.split(':')
+challenge = hashsplit[5]
+lmresp = hashsplit[3]
+ntresp = hashsplit[4]
+ct3 = ntresp[32:48]
+data = {
+    'ntlmv1': args.ntlmv1,
+    'user': hashsplit[0],
+    'domain': hashsplit[2],
+    'challenge': challenge,
+    'lmresp': lmresp,
+    'ntresp': ntresp,
+    'ct3': ct3
+}
+
+# Processing for different LM Response Conditions
+if lmresp[20:48] != "0000000000000000000000000000":
+    ct1 = ntresp[0:16]
+    ct2 = ntresp[16:32]
+    ct3 = ntresp[32:48]
+    output_data = {
+        'hostname': hashsplit[2],
+        'username': hashsplit[0],
+        'challenge': challenge,
+        'lm_response': lmresp,
+        'nt_response': ntresp,
+        'ct1': ct1,
+        'ct2': ct2,
+        'ct3': ct3
+    }
+
+    if args.json is None:
+        print("Hash Split Data: ", str(hashsplit))
+        print("Hostname: ", hashsplit[2])
+        print("Username: ", hashsplit[0])
+        print("Challenge: ", challenge)
+        print("LM Response: ", lmresp)
+        print("NT Response: ", ntresp)
+        print("CT1: ", ct1)
+        print("CT2: ", ct2)
+        print("CT3: ", ct3)
+        print("To Calculate Final NTLM Hash:")
+        if args.hcutils:
+            print(f"{args.hcutils}/ct3_to_ntlm.bin {ct3} {challenge}")
+        else:
+            print(f"./ct3_to_ntlm.bin {ct3} {challenge}")
+        print("To crack with hashcat, use this file:")
+        print(f"echo \"{ct1}:{challenge}\" >> 14000.hash")
+        print(f"echo \"{ct2}:{challenge}\" >> 14000.hash")
+        print(f"hashcat -m 14000 -a 3 -1 {args.hashcat}/charsets/DES_full.charset --hex-charset 14000.hash ?1?1?1?1?1?1?1?1")
+
+if lmresp[20:48] == "0000000000000000000000000000":
+    clientchallenge = hashsplit[5]
+    md5hash = calc_md5_challenge(clientchallenge, lmresp)
+    srvchallenge = md5hash[0:16]
+    data['srvchallenge'] = srvchallenge
+    ct1 = ntresp[0:16]
+    ct2 = ntresp[16:32]
+
+    if args.json is None:
+        print(f"Hash response is ESS, consider using responder with --lm or --disable-ess with a static challenge of 1122334455667788")
+        print(f"Client Challenge: {clientchallenge}")
+        print(f"Combined Challenge: {clientchallenge + lmresp[0:16]}")
+        print(f"MD5 Hash of Combined Challenge: {md5hash}")
+        print(f"Server Challenge: {srvchallenge}")
+        print("To calculate final NTLM hash use:")
+        if args.hcutils:
+            print(f"{args.hcutils}/ct3_to_ntlm.bin {ct3} {clientchallenge} {lmresp}")
+        else:
+            print(f"./ct3_to_ntlm.bin {ct3} {clientchallenge} {lmresp}")
+        print("To crack with hashcat, use this file:")
+        print(f"echo \"{ct1}:{srvchallenge}\" >> 14000.hash")
+        print(f"echo \"{ct2}:{srvchallenge}\" >> 14000.hash")
+        print(f"hashcat -m 14000 -a 3 -1 {args.hashcat}/charsets/DES_full.charset --hex-charset 14000.hash ?1?1?1?1?1?1?1?1")
+
+if args.json is not None:
+    if lmresp[20:48] != "0000000000000000000000000000":
+        if args.hcutils:
+            data['ct3_crack'] = f"{args.hcutils}/ct3_to_ntlm.bin {ct3} {challenge}"
+        else:
+            data['ct3_crack'] = f"ct3_to_ntlm.bin {ct3} {challenge}"
+        data['hash1'] = f"{ct1}:{challenge}"
+        data['hash2'] = f"{ct2}:{challenge}"
+
+    if lmresp[20:48] == "0000000000000000000000000000":
+        if args.hcutils:
+            data['ct3_crack'] = f"{args.hcutils}/ct3_to_ntlm.bin {ct3} {clientchallenge} {lmresp}"
+        else:
+            data['ct3_crack'] = f"ct3_to_ntlm.bin {ct3} {clientchallenge} {lmresp}"
+        data['hash1'] = f"{ct1}:{srvchallenge}"
+        data['hash2'] = f"{ct2}:{srvchallenge}"
+
+    json_data = json.dumps(data)
+    if args.output:
+        with open(args.output, 'w') as json_file:
+            json.dump(data, json_file, indent=4)
+    else:
+        print(json_data)
+import hashlib
+import binascii
+import argparse
+import json
+import time
+import os
+
+def calc_md5_challenge(client_challenge, lm_resp):
+    combined_challenge = client_challenge + lm_resp[0:16]
+    m = hashlib.md5()
+    m.update(binascii.unhexlify(combined_challenge))
+    return m.hexdigest()
+
+parser = argparse.ArgumentParser()
+parser.add_argument('--ntlmv1', help='NTLMv1 Hash in responder format', required=True)
+parser.add_argument('--hashcat', help='hashcat path, eg: ~/git/hashcat', required=False)
+parser.add_argument('--hcutils', help='hashcat-utils path, eg: ~/git/hashcat-utils', required=False)
+parser.add_argument('--json', help='if this is set to anything it will output json, eg: --json 1', required=False)
+parser.add_argument('--output', help='output to a file, specify filename', required=False)
+args = parser.parse_args()
+
+# Splitting the NTLMv1 hash field
+hashsplit = args.ntlmv1.split(':')
+challenge = hashsplit[5]
+lmresp = hashsplit[3]
+ntresp = hashsplit[4]
+ct3 = ntresp[32:48]
+data = {
+    'ntlmv1': args.ntlmv1,
+    'user': hashsplit[0],
+    'domain': hashsplit[2],
+    'challenge': challenge,
+    'lmresp': lmresp,
+    'ntresp': ntresp,
+    'ct3': ct3
+}
+
+# Processing for different LM Response Conditions
+if lmresp[20:48] != "0000000000000000000000000000":
+    ct1 = ntresp[0:16]
+    ct2 = ntresp[16:32]
+    ct3 = ntresp[32:48]
+    output_data = {
+        'hostname': hashsplit[2],
+        'username': hashsplit[0],
+        'challenge': challenge,
+        'lm_response': lmresp,
+        'nt_response': ntresp,
+        'ct1': ct1,
+        'ct2': ct2,
+        'ct3': ct3
+    }
+
+    if args.json is None:
+        print("Hash Split Data: ", str(hashsplit))
+        print("Hostname: ", hashsplit[2])
+        print("Username: ", hashsplit[0])
+        print("Challenge: ", challenge)
+        print("LM Response: ", lmresp)
+        print("NT Response: ", ntresp)
+        print("CT1: ", ct1)
+        print("CT2: ", ct2)
+        print("CT3: ", ct3)
+        print("To Calculate Final NTLM Hash:")
+        if args.hcutils:
+            print(f"{args.hcutils}/ct3_to_ntlm.bin {ct3} {challenge}")
+        else:
+            print(f"./ct3_to_ntlm.bin {ct3} {challenge}")
+        print("To crack with hashcat, use this file:")
+        print(f"echo \"{ct1}:{challenge}\" >> 14000.hash")
+        print(f"echo \"{ct2}:{challenge}\" >> 14000.hash")
+        print(f"hashcat -m 14000 -a 3 -1 {args.hashcat}/charsets/DES_full.charset --hex-charset 14000.hash ?1?1?1?1?1?1?1?1")
+
+if lmresp[20:48] == "0000000000000000000000000000":
+    clientchallenge = hashsplit[5]
+    md5hash = calc_md5_challenge(clientchallenge, lmresp)
+    srvchallenge = md5hash[0:16]
+    data['srvchallenge'] = srvchallenge
+    ct1 = ntresp[0:16]
+    ct2 = ntresp[16:32]
+
+    if args.json is None:
+        print(f"Hash response is ESS, consider using responder with --lm or --disable-ess with a static challenge of 1122334455667788")
+        print(f"Client Challenge: {clientchallenge}")
+        print(f"Combined Challenge: {clientchallenge + lmresp[0:16]}")
+        print(f"MD5 Hash of Combined Challenge: {md5hash}")
+        print(f"Server Challenge: {srvchallenge}")
+        print("To calculate final NTLM hash use:")
+        if args.hcutils:
+            print(f"{args.hcutils}/ct3_to_ntlm.bin {ct3} {clientchallenge} {lmresp}")
+        else:
+            print(f"./ct3_to_ntlm.bin {ct3} {clientchallenge} {lmresp}")
+        print("To crack with hashcat, use this file:")
+        print(f"echo \"{ct1}:{srvchallenge}\" >> 14000.hash")
+        print(f"echo \"{ct2}:{srvchallenge}\" >> 14000.hash")
+        print(f"hashcat -m 14000 -a 3 -1 {args.hashcat}/charsets/DES_full.charset --hex-charset 14000.hash ?1?1?1?1?1?1?1?1")
+
+if args.json is not None:
+    if lmresp[20:48] != "0000000000000000000000000000":
+        if args.hcutils:
+            data['ct3_crack'] = f"{args.hcutils}/ct3_to_ntlm.bin {ct3} {challenge}"
+        else:
+            data['ct3_crack'] = f"ct3_to_ntlm.bin {ct3} {challenge}"
+        data['hash1'] = f"{ct1}:{challenge}"
+        data['hash2'] = f"{ct2}:{challenge}"
+
+    if lmresp[20:48] == "0000000000000000000000000000":
+        if args.hcutils:
+            data['ct3_crack'] = f"{args.hcutils}/ct3_to_ntlm.bin {ct3} {clientchallenge} {lmresp}"
+        else:
+            data['ct3_crack'] = f"ct3_to_ntlm.bin {ct3} {clientchallenge} {lmresp}"
+        data['hash1'] = f"{ct1}:{srvchallenge}"
+        data['hash2'] = f"{ct2}:{srvchallenge}"
+
+    json_data = json.dumps(data)
+    if args.output:
+        with open(args.output, 'w') as json_file:
+            json.dump(data, json_file, indent=4)
+    else:
+        print(json_data)
+import hashlib
+import binascii
+import argparse
+import json
+import time
+import os
+
+def calc_md5_challenge(client_challenge, lm_resp):
+    combined_challenge = client_challenge + lm_resp[0:16]
+    m = hashlib.md5()
+    m.update(binascii.unhexlify(combined_challenge))
+    return m.hexdigest()
+
+parser = argparse.ArgumentParser()
+parser.add_argument('--ntlmv1', help='NTLMv1 Hash in responder format', required=True)
+parser.add_argument('--hashcat', help='hashcat path, eg: ~/git/hashcat', required=False)
+parser.add_argument('--hcutils', help='hashcat-utils path, eg: ~/git/hashcat-utils', required=False)
+parser.add_argument('--json', help='if this is set to anything it will output json, eg: --json 1', required=False)
+parser.add_argument('--output', help='output to a file, specify filename', required=False)
+args = parser.parse_args()
+
+# Splitting the NTLMv1 hash field
+hashsplit = args.ntlmv1.split(':')
+challenge = hashsplit[5]
+lmresp = hashsplit[3]
+ntresp = hashsplit[4]
+ct3 = ntresp[32:48]
+data = {
+    'ntlmv1': args.ntlmv1,
+    'user': hashsplit[0],
+    'domain': hashsplit[2],
+    'challenge': challenge,
+    'lmresp': lmresp,
+    'ntresp': ntresp,
+    'ct3': ct3
+}
+
+# Processing for different LM Response Conditions
+if lmresp[20:48] != "0000000000000000000000000000":
+    ct1 = ntresp[0:16]
+    ct2 = ntresp[16:32]
+    ct3 = ntresp[32:48]
+    output_data = {
+        'hostname': hashsplit[2],
+        'username': hashsplit[0],
+        'challenge': challenge,
+        'lm_response': lmresp,
+        'nt_response': ntresp,
+        'ct1': ct1,
+        'ct2': ct2,
+        'ct3': ct3
+    }
+
+    if args.json is None:
+        print("Hash Split Data: ", str(hashsplit))
+        print("Hostname: ", hashsplit[2])
+        print("Username: ", hashsplit[0])
+        print("Challenge: ", challenge)
+        print("LM Response: ", lmresp)
+        print("NT Response: ", ntresp)
+        print("CT1: ", ct1)
+        print("CT2: ", ct2)
+        print("CT3: ", ct3)
+        print("To Calculate Final NTLM Hash:")
+        if args.hcutils:
+            print(f"{args.hcutils}/ct3_to_ntlm.bin {ct3} {challenge}")
+        else:
+            print(f"./ct3_to_ntlm.bin {ct3} {challenge}")
+        print("To crack with hashcat, use this file:")
+        print(f"echo \"{ct1}:{challenge}\" >> 14000.hash")
+        print(f"echo \"{ct2}:{challenge}\" >> 14000.hash")
+        print(f"hashcat -m 14000 -a 3 -1 {args.hashcat}/charsets/DES_full.charset --hex-charset 14000.hash ?1?1?1?1?1?1?1?1")
+
+if lmresp[20:48] == "0000000000000000000000000000":
+    clientchallenge = hashsplit[5]
+    md5hash = calc_md5_challenge(clientchallenge, lmresp)
+    srvchallenge = md5hash[0:16]
+    data['srvchallenge'] = srvchallenge
+    ct1 = ntresp[0:16]
+    ct2 = ntresp[16:32]
+
+    if args.json is None:
+        print(f"Hash response is ESS, consider using responder with --lm or --disable-ess with a static challenge of 1122334455667788")
+        print(f"Client Challenge: {clientchallenge}")
+        print(f"Combined Challenge: {clientchallenge + lmresp[0:16]}")
+        print(f"MD5 Hash of Combined Challenge: {md5hash}")
+        print(f"Server Challenge: {srvchallenge}")
+        print("To calculate final NTLM hash use:")
+        if args.hcutils:
+            print(f"{args.hcutils}/ct3_to_ntlm.bin {ct3} {clientchallenge} {lmresp}")
+        else:
+            print(f"./ct3_to_ntlm.bin {ct3} {clientchallenge} {lmresp}")
+        print("To crack with hashcat, use this file:")
+        print(f"echo \"{ct1}:{srvchallenge}\" >> 14000.hash")
+        print(f"echo \"{ct2}:{srvchallenge}\" >> 14000.hash")
+        print(f"hashcat -m 14000 -a 3 -1 {args.hashcat}/charsets/DES_full.charset --hex-charset 14000.hash ?1?1?1?1?1?1?1?1")
+
+if args.json is not None:
+    if lmresp[20:48] != "0000000000000000000000000000":
+        if args.hcutils:
+            data['ct3_crack'] = f"{args.hcutils}/ct3_to_ntlm.bin {ct3} {challenge}"
+        else:
+            data['ct3_crack'] = f"ct3_to_ntlm.bin {ct3} {challenge}"
+        data['hash1'] = f"{ct1}:{challenge}"
+        data['hash2'] = f"{ct2}:{challenge}"
+
+    if lmresp[20:48] == "0000000000000000000000000000":
+        if args.hcutils:
+            data['ct3_crack'] = f"{args.hcutils}/ct3_to_ntlm.bin {ct3} {clientchallenge} {lmresp}"
+        else:
+            data['ct3_crack'] = f"ct3_to_ntlm.bin {ct3} {clientchallenge} {lmresp}"
+        data['hash1'] = f"{ct1}:{srvchallenge}"
+        data['hash2'] = f"{ct2}:{srvchallenge}"
+
+    json_data = json.dumps(data)
+    if args.output:
+        with open(args.output, 'w') as json_file:
+            json.dump(data, json_file, indent=4)
+    else:
+        print(json_data)
+import hashlib
+import binascii
+import argparse
+import json
+import time
+import os
+
+def calc_md5_challenge(client_challenge, lm_resp):
+    combined_challenge = client_challenge + lm_resp[0:16]
+    m = hashlib.md5()
+    m.update(binascii.unhexlify(combined_challenge))
+    return m.hexdigest()
+
+parser = argparse.ArgumentParser()
+parser.add_argument('--ntlmv1', help='NTLMv1 Hash in responder format', required=True)
+parser.add_argument('--hashcat', help='hashcat path, eg: ~/git/hashcat', required=False)
+parser.add_argument('--hcutils', help='hashcat-utils path, eg: ~/git/hashcat-utils', required=False)
+parser.add_argument('--json', help='if this is set to anything it will output json, eg: --json 1', required=False)
+parser.add_argument('--output', help='output to a file, specify filename', required=False)
+args = parser.parse_args()
+
+# Splitting the NTLMv1 hash field
+hashsplit = args.ntlmv1.split(':')
+challenge = hashsplit[5]
+lmresp = hashsplit[3]
+ntresp = hashsplit[4]
+ct3 = ntresp[32:48]
+data = {
+    'ntlmv1': args.ntlmv1,
+    'user': hashsplit[0],
+    'domain': hashsplit[2],
+    'challenge': challenge,
+    'lmresp': lmresp,
+    'ntresp': ntresp,
+    'ct3': ct3
+}
+
+# Processing for different LM Response Conditions
+if lmresp[20:48] != "0000000000000000000000000000":
+    ct1 = ntresp[0:16]
+    ct2 = ntresp[16:32]
+    ct3 = ntresp[32:48]
+    output_data = {
+        'hostname': hashsplit[2],
+        'username': hashsplit[0],
+        'challenge': challenge,
+        'lm_response': lmresp,
+        'nt_response': ntresp,
+        'ct1': ct1,
+        'ct2': ct2,
+        'ct3': ct3
+    }
+
+    if args.json is None:
+        print("Hash Split Data: ", str(hashsplit))
+        print("Hostname: ", hashsplit[2])
+        print("Username: ", hashsplit[0])
+        print("Challenge: ", challenge)
+        print("LM Response: ", lmresp)
+        print("NT Response: ", ntresp)
+        print("CT1: ", ct1)
+        print("CT2: ", ct2)
+        print("CT3: ", ct3)
+        print("To Calculate Final NTLM Hash:")
+        if args.hcutils:
+            print(f"{args.hcutils}/ct3_to_ntlm.bin {ct3} {challenge}")
+        else:
+            print(f"./ct3_to_ntlm.bin {ct3} {challenge}")
+        print("To crack with hashcat, use this file:")
+        print(f"echo \"{ct1}:{challenge}\" >> 14000.hash")
+        print(f"echo \"{ct2}:{challenge}\" >> 14000.hash")
+        print(f"hashcat -m 14000 -a 3 -1 {args.hashcat}/charsets/DES_full.charset --hex-charset 14000.hash ?1?1?1?1?1?1?1?1")
+
+if lmresp[20:48] == "0000000000000000000000000000":
+    clientchallenge = hashsplit[5]
+    md5hash = calc_md5_challenge(clientchallenge, lmresp)
+    srvchallenge = md5hash[0:16]
+    data['srvchallenge'] = srvchallenge
+    ct1 = ntresp[0:16]
+    ct2 = ntresp[16:32]
+
+    if args.json is None:
+        print(f"Hash response is ESS, consider using responder with --lm or --disable-ess with a static challenge of 1122334455667788")
+        print(f"Client Challenge: {clientchallenge}")
+        print(f"Combined Challenge: {clientchallenge + lmresp[0:16]}")
+        print(f"MD5 Hash of Combined Challenge: {md5hash}")
+        print(f"Server Challenge: {srvchallenge}")
+        print("To calculate final NTLM hash use:")
+        if args.hcutils:
+            print(f"{args.hcutils}/ct3_to_ntlm.bin {ct3} {clientchallenge} {lmresp}")
+        else:
+            print(f"./ct3_to_ntlm.bin {ct3} {clientchallenge} {lmresp}")
+        print("To crack with hashcat, use this file:")
+        print(f"echo \"{ct1}:{srvchallenge}\" >> 14000.hash")
+        print(f"echo \"{ct2}:{srvchallenge}\" >> 14000.hash")
+        print(f"hashcat -m 14000 -a 3 -1 {args.hashcat}/charsets/DES_full.charset --hex-charset 14000.hash ?1?1?1?1?1?1?1?1")
+
+if args.json is not None:
+    if lmresp[20:48] != "0000000000000000000000000000":
+        if args.hcutils:
+            data['ct3_crack'] = f"{args.hcutils}/ct3_to_ntlm.bin {ct3} {challenge}"
+        else:
+            data['ct3_crack'] = f"ct3_to_ntlm.bin {ct3} {challenge}"
+        data['hash1'] = f"{ct1}:{challenge}"
+        data['hash2'] = f"{ct2}:{challenge}"
+
+    if lmresp[20:48] == "0000000000000000000000000000":
+        if args.hcutils:
+            data['ct3_crack'] = f"{args.hcutils}/ct3_to_ntlm.bin {ct3} {clientchallenge} {lmresp}"
+        else:
+            data['ct3_crack'] = f"ct3_to_ntlm.bin {ct3} {clientchallenge} {lmresp}"
+        data['hash1'] = f"{ct1}:{srvchallenge}"
+        data['hash2'] = f"{ct2}:{srvchallenge}"
+
+    json_data = json.dumps(data)
+    if args.output:
+        with open(args.output, 'w') as json_file:
+            json.dump(data, json_file, indent=4)
+    else:
+        print(json_data)
+import hashlib
+import binascii
+import argparse
+import json
+import time
+import os
+
+def calc_md5_challenge(client_challenge, lm_resp):
+    combined_challenge = client_challenge + lm_resp[0:16]
+    m = hashlib.md5()
+    m.update(binascii.unhexlify(combined_challenge))
+    return m.hexdigest()
+
+parser = argparse.ArgumentParser()
+parser.add_argument('--ntlmv1', help='NTLMv1 Hash in responder format', required=True)
+parser.add_argument('--hashcat', help='hashcat path, eg: ~/git/hashcat', required=False)
+parser.add_argument('--hcutils', help='hashcat-utils path, eg: ~/git/hashcat-utils', required=False)
+parser.add_argument('--json', help='if this is set to anything it will output json, eg: --json 1', required=False)
+parser.add_argument('--output', help='output to a file, specify filename', required=False)
+args = parser.parse_args()
+
+# Splitting the NTLMv1 hash field
+hashsplit = args.ntlmv1.split(':')
+challenge = hashsplit[5]
+lmresp = hashsplit[3]
+ntresp = hashsplit[4]
+ct3 = ntresp[32:48]
+data = {
+    'ntlmv1': args.ntlmv1,
+    'user': hashsplit[0],
+    'domain': hashsplit[2],
+    'challenge': challenge,
+    'lmresp': lmresp,
+    'ntresp': ntresp,
+    'ct3': ct3
+}
+
+# Processing for different LM Response Conditions
+if lmresp[20:48] != "0000000000000000000000000000":
+    ct1 = ntresp[0:16]
+    ct2 = ntresp[16:32]
+    ct3 = ntresp[32:48]
+    output_data = {
+        'hostname': hashsplit[2],
+        'username': hashsplit[0],
+        'challenge': challenge,
+        'lm_response': lmresp,
+        'nt_response': ntresp,
+        'ct1': ct1,
+        'ct2': ct2,
+        'ct3': ct3
+    }
+
+    if args.json is None:
+        print("Hash Split Data: ", str(hashsplit))
+        print("Hostname: ", hashsplit[2])
+        print("Username: ", hashsplit[0])
+        print("Challenge: ", challenge)
+        print("LM Response: ", lmresp)
+        print("NT Response: ", ntresp)
+        print("CT1: ", ct1)
+        print("CT2: ", ct2)
+        print("CT3: ", ct3)
+        print("To Calculate Final NTLM Hash:")
+        if args.hcutils:
+            print(f"{args.hcutils}/ct3_to_ntlm.bin {ct3} {challenge}")
+        else:
+            print(f"./ct3_to_ntlm.bin {ct3} {challenge}")
+        print("To crack with hashcat, use this file:")
+        print(f"echo \"{ct1}:{challenge}\" >> 14000.hash")
+        print(f"echo \"{ct2}:{challenge}\" >> 14000.hash")
+        print(f"hashcat -m 14000 -a 3 -1 {args.hashcat}/charsets/DES_full.charset --hex-charset 14000.hash ?1?1?1?1?1?1?1?1")
+
+if lmresp[20:48] == "0000000000000000000000000000":
+    clientchallenge = hashsplit[5]
+    md5hash = calc_md5_challenge(clientchallenge, lmresp)
+    srvchallenge = md5hash[0:16]
+    data['srvchallenge'] = srvchallenge
+    ct1 = ntresp[0:16]
+    ct2 = ntresp[16:32]
+
+    if args.json is None:
+        print(f"Hash response is ESS, consider using responder with --lm or --disable-ess with a static challenge of 1122334455667788")
+        print(f"Client Challenge: {clientchallenge}")
+        print(f"Combined Challenge: {clientchallenge + lmresp[0:16]}")
+        print(f"MD5 Hash of Combined Challenge: {md5hash}")
+        print(f"Server Challenge: {srvchallenge}")
+        print("To calculate final NTLM hash use:")
+        if args.hcutils:
+            print(f"{args.hcutils}/ct3_to_ntlm.bin {ct3} {clientchallenge} {lmresp}")
+        else:
+            print(f"./ct3_to_ntlm.bin {ct3} {clientchallenge} {lmresp}")
+        print("To crack with hashcat, use this file:")
+        print(f"echo \"{ct1}:{srvchallenge}\" >> 14000.hash")
+        print(f"echo \"{ct2}:{srvchallenge}\" >> 14000.hash")
+        print(f"hashcat -m 14000 -a 3 -1 {args.hashcat}/charsets/DES_full.charset --hex-charset 14000.hash ?1?1?1?1?1?1?1?1")
+
+if args.json is not None:
+    if lmresp[20:48] != "0000000000000000000000000000":
+        if args.hcutils:
+            data['ct3_crack'] = f"{args.hcutils}/ct3_to_ntlm.bin {ct3} {challenge}"
+        else:
+            data['ct3_crack'] = f"ct3_to_ntlm.bin {ct3} {challenge}"
+        data['hash1'] = f"{ct1}:{challenge}"
+        data['hash2'] = f"{ct2}:{challenge}"
+
+    if lmresp[20:48] == "0000000000000000000000000000":
+        if args.hcutils:
+            data['ct3_crack'] = f"{args.hcutils}/ct3_to_ntlm.bin {ct3} {clientchallenge} {lmresp}"
+        else:
+            data['ct3_crack'] = f"ct3_to_ntlm.bin {ct3} {clientchallenge} {lmresp}"
+        data['hash1'] = f"{ct1}:{srvchallenge}"
+        data['hash2'] = f"{ct2}:{srvchallenge}"
+
+    json_data = json.dumps(data)
+    if args.output:
+        with open(args.output, 'w') as json_file:
+            json.dump(data, json_file, indent=4)
+    else:
+        print(json_data)
+import hashlib
+import binascii
+import argparse
+import json
+import time
+import os
+
+def calc_md5_challenge(client_challenge, lm_resp):
+    combined_challenge = client_challenge + lm_resp[0:16]
+    m = hashlib.md5()
+    m.update(binascii.unhexlify(combined_challenge))
+    return m.hexdigest()
+
+parser = argparse.ArgumentParser()
+parser.add_argument('--ntlmv1', help='NTLMv1 Hash in responder format', required=True)
+parser.add_argument('--hashcat', help='hashcat path, eg: ~/git/hashcat', required=False)
+parser.add_argument('--hcutils', help='hashcat-utils path, eg: ~/git/hashcat-utils', required=False)
+parser.add_argument('--json', help='if this is set to anything it will output json, eg: --json 1', required=False)
+parser.add_argument('--output', help='output to a file, specify filename', required=False)
+args = parser.parse_args()
+
+# Splitting the NTLMv1 hash field
+hashsplit = args.ntlmv1.split(':')
+challenge = hashsplit[5]
+lmresp = hashsplit[3]
+ntresp = hashsplit[4]
+ct3 = ntresp[32:48]
+data = {
+    'ntlmv1': args.ntlmv1,
+    'user': hashsplit[0],
+    'domain': hashsplit[2],
+    'challenge': challenge,
+    'lmresp': lmresp,
+    'ntresp': ntresp,
+    'ct3': ct3
+}
+
+# Processing for different LM Response Conditions
+if lmresp[20:48] != "0000000000000000000000000000":
+    ct1 = ntresp[0:16]
+    ct2 = ntresp[16:32]
+    ct3 = ntresp[32:48]
+    output_data = {
+        'hostname': hashsplit[2],
+        'username': hashsplit[0],
+        'challenge': challenge,
+        'lm_response': lmresp,
+        'nt_response': ntresp,
+        'ct1': ct1,
+        'ct2': ct2,
+        'ct3': ct3
+    }
+
+    if args.json is None:
+        print("Hash Split Data: ", str(hashsplit))
+        print("Hostname: ", hashsplit[2])
+        print("Username: ", hashsplit[0])
+        print("Challenge: ", challenge)
+        print("LM Response: ", lmresp)
+        print("NT Response: ", ntresp)
+        print("CT1: ", ct1)
+        print("CT2: ", ct2)
+        print("CT3: ", ct3)
+        print("To Calculate Final NTLM Hash:")
+        if args.hcutils:
+            print(f"{args.hcutils}/ct3_to_ntlm.bin {ct3} {challenge}")
+        else:
+            print(f"./ct3_to_ntlm.bin {ct3} {challenge}")
+        print("To crack with hashcat, use this file:")
+        print(f"echo \"{ct1}:{challenge}\" >> 14000.hash")
+        print(f"echo \"{ct2}:{challenge}\" >> 14000.hash")
+        print(f"hashcat -m 14000 -a 3 -1 {args.hashcat}/charsets/DES_full.charset --hex-charset 14000.hash ?1?1?1?1?1?1?1?1")
+
+if lmresp[20:48] == "0000000000000000000000000000":
+    clientchallenge = hashsplit[5]
+    md5hash = calc_md5_challenge(clientchallenge, lmresp)
+    srvchallenge = md5hash[0:16]
+    data['srvchallenge'] = srvchallenge
+    ct1 = ntresp[0:16]
+    ct2 = ntresp[16:32]
+
+    if args.json is None:
+        print(f"Hash response is ESS, consider using responder with --lm or --disable-ess with a static challenge of 1122334455667788")
+        print(f"Client Challenge: {clientchallenge}")
+        print(f"Combined Challenge: {clientchallenge + lmresp[0:16]}")
+        print(f"MD5 Hash of Combined Challenge: {md5hash}")
+        print(f"Server Challenge: {srvchallenge}")
+        print("To calculate final NTLM hash use:")
+        if args.hcutils:
+            print(f"{args.hcutils}/ct3_to_ntlm.bin {ct3} {clientchallenge} {lmresp}")
+        else:
+            print(f"./ct3_to_ntlm.bin {ct3} {clientchallenge} {lmresp}")
+        print("To crack with hashcat, use this file:")
+        print(f"echo \"{ct1}:{srvchallenge}\" >> 14000.hash")
+        print(f"echo \"{ct2}:{srvchallenge}\" >> 14000.hash")
+        print(f"hashcat -m 14000 -a 3 -1 {args.hashcat}/charsets/DES_full.charset --hex-charset 14000.hash ?1?1?1?1?1?1?1?1")
+
+if args.json is not None:
+    if lmresp[20:48] != "0000000000000000000000000000":
+        if args.hcutils:
+            data['ct3_crack'] = f"{args.hcutils}/ct3_to_ntlm.bin {ct3} {challenge}"
+        else:
+            data['ct3_crack'] = f"ct3_to_ntlm.bin {ct3} {challenge}"
+        data['hash1'] = f"{ct1}:{challenge}"
+        data['hash2'] = f"{ct2}:{challenge}"
+
+    if lmresp[20:48] == "0000000000000000000000000000":
+        if args.hcutils:
+            data['ct3_crack'] = f"{args.hcutils}/ct3_to_ntlm.bin {ct3} {clientchallenge} {lmresp}"
+        else:
+            data['ct3_crack'] = f"ct3_to_ntlm.bin {ct3} {clientchallenge} {lmresp}"
+        data['hash1'] = f"{ct1}:{srvchallenge}"
+        data['hash2'] = f"{ct2}:{srvchallenge}"
+
+    json_data = json.dumps(data)
+    if args.output:
+        with open(args.output, 'w') as json_file:
+            json.dump(data, json_file, indent=4)
+    else:
+        print(json_data)
+import hashlib
+import binascii
+import argparse
+import json
+import time
+import os
+
+def calc_md5_challenge(client_challenge, lm_resp):
+    combined_challenge = client_challenge + lm_resp[0:16]
+    m = hashlib.md5()
+    m.update(binascii.unhexlify(combined_challenge))
+    return m.hexdigest()
+
+parser = argparse.ArgumentParser()
+parser.add_argument('--ntlmv1', help='NTLMv1 Hash in responder format', required=True)
+parser.add_argument('--hashcat', help='hashcat path, eg: ~/git/hashcat', required=False)
+parser.add_argument('--hcutils', help='hashcat-utils path, eg: ~/git/hashcat-utils', required=False)
+parser.add_argument('--json', help='if this is set to anything it will output json, eg: --json 1', required=False)
+parser.add_argument('--output', help='output to a file, specify filename', required=False)
+args = parser.parse_args()
+
+# Splitting the NTLMv1 hash field
+hashsplit = args.ntlmv1.split(':')
+challenge = hashsplit[5]
+lmresp = hashsplit[3]
+ntresp = hashsplit[4]
+ct3 = ntresp[32:48]
+data = {
+    'ntlmv1': args.ntlmv1,
+    'user': hashsplit[0],
+    'domain': hashsplit[2],
+    'challenge': challenge,
+    'lmresp': lmresp,
+    'ntresp': ntresp,
+    'ct3': ct3
+}
+
+# Processing for different LM Response Conditions
+if lmresp[20:48] != "0000000000000000000000000000":
+    ct1 = ntresp[0:16]
+    ct2 = ntresp[16:32]
+    ct3 = ntresp[32:48]
+    output_data = {
+        'hostname': hashsplit[2],
+        'username': hashsplit[0],
+        'challenge': challenge,
+        'lm_response': lmresp,
+        'nt_response': ntresp,
+        'ct1': ct1,
+        'ct2': ct2,
+        'ct3': ct3
+    }
+
+    if args.json is None:
+        print("Hash Split Data: ", str(hashsplit))
+        print("Hostname: ", hashsplit[2])
+        print("Username: ", hashsplit[0])
+        print("Challenge: ", challenge)
+        print("LM Response: ", lmresp)
+        print("NT Response: ", ntresp)
+        print("CT1: ", ct1)
+        print("CT2: ", ct2)
+        print("CT3: ", ct3)
+        print("To Calculate Final NTLM Hash:")
+        if args.hcutils:
+            print(f"{args.hcutils}/ct3_to_ntlm.bin {ct3} {challenge}")
+        else:
+            print(f"./ct3_to_ntlm.bin {ct3} {challenge}")
+        print("To crack with hashcat, use this file:")
+        print(f"echo \"{ct1}:{challenge}\" >> 14000.hash")
+        print(f"echo \"{ct2}:{challenge}\" >> 14000.hash")
+        print(f"hashcat -m 14000 -a 3 -1 {args.hashcat}/charsets/DES_full.charset --hex-charset 14000.hash ?1?1?1?1?1?1?1?1")
+
+if lmresp[20:48] == "0000000000000000000000000000":
+    clientchallenge = hashsplit[5]
+    md5hash = calc_md5_challenge(clientchallenge, lmresp)
+    srvchallenge = md5hash[0:16]
+    data['srvchallenge'] = srvchallenge
+    ct1 = ntresp[0:16]
+    ct2 = ntresp[16:32]
+
+    if args.json is None:
+        print(f"Hash response is ESS, consider using responder with --lm or --disable-ess with a static challenge of 1122334455667788")
+        print(f"Client Challenge: {clientchallenge}")
+        print(f"Combined Challenge: {clientchallenge + lmresp[0:16]}")
+        print(f"MD5 Hash of Combined Challenge: {md5hash}")
+        print(f"Server Challenge: {srvchallenge}")
+        print("To calculate final NTLM hash use:")
+        if args.hcutils:
+            print(f"{args.hcutils}/ct3_to_ntlm.bin {ct3} {clientchallenge} {lmresp}")
+        else:
+            print(f"./ct3_to_ntlm.bin {ct3} {clientchallenge} {lmresp}")
+        print("To crack with hashcat, use this file:")
+        print(f"echo \"{ct1}:{srvchallenge}\" >> 14000.hash")
+        print(f"echo \"{ct2}:{srvchallenge}\" >> 14000.hash")
+        print(f"hashcat -m 14000 -a 3 -1 {args.hashcat}/charsets/DES_full.charset --hex-charset 14000.hash ?1?1?1?1?1?1?1?1")
+
+if args.json is not None:
+    if lmresp[20:48] != "0000000000000000000000000000":
+        if args.hcutils:
+            data['ct3_crack'] = f"{args.hcutils}/ct3_to_ntlm.bin {ct3} {challenge}"
+        else:
+            data['ct3_crack'] = f"ct3_to_ntlm.bin {ct3} {challenge}"
+        data['hash1'] = f"{ct1}:{challenge}"
+        data['hash2'] = f"{ct2}:{challenge}"
+
+    if lmresp[20:48] == "0000000000000000000000000000":
+        if args.hcutils:
+            data['ct3_crack'] = f"{args.hcutils}/ct3_to_ntlm.bin {ct3} {clientchallenge} {lmresp}"
+        else:
+            data['ct3_crack'] = f"ct3_to_ntlm.bin {ct3} {clientchallenge} {lmresp}"
+        data['hash1'] = f"{ct1}:{srvchallenge}"
+        data['hash2'] = f"{ct2}:{srvchallenge}"
+
+    json_data = json.dumps(data)
+    if args.output:
+        with open(args.output, 'w') as json_file:
+            json.dump(data, json_file, indent=4)
+    else:
+        print(json_data)
+import hashlib
+import binascii
+import argparse
+import json
+import time
+import os
+
+def calc_md5_challenge(client_challenge, lm_resp):
+    combined_challenge = client_challenge + lm_resp[0:16]
+    m = hashlib.md5()
+    m.update(binascii.unhexlify(combined_challenge))
+    return m.hexdigest()
+
+parser = argparse.ArgumentParser()
+parser.add_argument('--ntlmv1', help='NTLMv1 Hash in responder format', required=True)
+parser.add_argument('--hashcat', help='hashcat path, eg: ~/git/hashcat', required=False)
+parser.add_argument('--hcutils', help='hashcat-utils path, eg: ~/git/hashcat-utils', required=False)
+parser.add_argument('--json', help='if this is set to anything it will output json, eg: --json 1', required=False)
+parser.add_argument('--output', help='output to a file, specify filename', required=False)
+args = parser.parse_args()
+
+# Splitting the NTLMv1 hash field
+hashsplit = args.ntlmv1.split(':')
+challenge = hashsplit[5]
+lmresp = hashsplit[3]
+ntresp = hashsplit[4]
+ct3 = ntresp[32:48]
+data = {
+    'ntlmv1': args.ntlmv1,
+    'user': hashsplit[0],
+    'domain': hashsplit[2],
+    'challenge': challenge,
+    'lmresp': lmresp,
+    'ntresp': ntresp,
+    'ct3': ct3
+}
+
+# Processing for different LM Response Conditions
+if lmresp[20:48] != "0000000000000000000000000000":
+    ct1 = ntresp[0:16]
+    ct2 = ntresp[16:32]
+    ct3 = ntresp[32:48]
+    output_data = {
+        'hostname': hashsplit[2],
+        'username': hashsplit[0],
+        'challenge': challenge,
+        'lm_response': lmresp,
+        'nt_response': ntresp,
+        'ct1': ct1,
+        'ct2': ct2,
+        'ct3': ct3
+    }
+
+    if args.json is None:
+        print("Hash Split Data: ", str(hashsplit))
+        print("Hostname: ", hashsplit[2])
+        print("Username: ", hashsplit[0])
+        print("Challenge: ", challenge)
+        print("LM Response: ", lmresp)
+        print("NT Response: ", ntresp)
+        print("CT1: ", ct1)
+        print("CT2: ", ct2)
+        print("CT3: ", ct3)
+        print("To Calculate Final NTLM Hash:")
+        if args.hcutils:
+            print(f"{args.hcutils}/ct3_to_ntlm.bin {ct3} {challenge}")
+        else:
+            print(f"./ct3_to_ntlm.bin {ct3} {challenge}")
+        print("To crack with hashcat, use this file:")
+        print(f"echo \"{ct1}:{challenge}\" >> 14000.hash")
+        print(f"echo \"{ct2}:{challenge}\" >> 14000.hash")
+        print(f"hashcat -m 14000 -a 3 -1 {args.hashcat}/charsets/DES_full.charset --hex-charset 14000.hash ?1?1?1?1?1?1?1?1")
+
+if lmresp[20:48] == "0000000000000000000000000000":
+    clientchallenge = hashsplit[5]
+    md5hash = calc_md5_challenge(clientchallenge, lmresp)
+    srvchallenge = md5hash[0:16]
+    data['srvchallenge'] = srvchallenge
+    ct1 = ntresp[0:16]
+    ct2 = ntresp[16:32]
+
+    if args.json is None:
+        print(f"Hash response is ESS, consider using responder with --lm or --disable-ess with a static challenge of 1122334455667788")
+        print(f"Client Challenge: {clientchallenge}")
+        print(f"Combined Challenge: {clientchallenge + lmresp[0:16]}")
+        print(f"MD5 Hash of Combined Challenge: {md5hash}")
+        print(f"Server Challenge: {srvchallenge}")
+        print("To calculate final NTLM hash use:")
+        if args.hcutils:
+            print(f"{args.hcutils}/ct3_to_ntlm.bin {ct3} {clientchallenge} {lmresp}")
+        else:
+            print(f"./ct3_to_ntlm.bin {ct3} {clientchallenge} {lmresp}")
+        print("To crack with hashcat, use this file:")
+        print(f"echo \"{ct1}:{srvchallenge}\" >> 14000.hash")
+        print(f"echo \"{ct2}:{srvchallenge}\" >> 14000.hash")
+        print(f"hashcat -m 14000 -a 3 -1 {args.hashcat}/charsets/DES_full.charset --hex-charset 14000.hash ?1?1?1?1?1?1?1?1")
+
+if args.json is not None:
+    if lmresp[20:48] != "0000000000000000000000000000":
+        if args.hcutils:
+            data['ct3_crack'] = f"{args.hcutils}/ct3_to_ntlm.bin {ct3} {challenge}"
+        else:
+            data['ct3_crack'] = f"ct3_to_ntlm.bin {ct3} {challenge}"
+        data['hash1'] = f"{ct1}:{challenge}"
+        data['hash2'] = f"{ct2}:{challenge}"
+
+    if lmresp[20:48] == "0000000000000000000000000000":
+        if args.hcutils:
+            data['ct3_crack'] = f"{args.hcutils}/ct3_to_ntlm.bin {ct3} {clientchallenge} {lmresp}"
+        else:
+            data['ct3_crack'] = f"ct3_to_ntlm.bin {ct3} {clientchallenge} {lmresp}"
+        data['hash1'] = f"{ct1}:{srvchallenge}"
+        data['hash2'] = f"{ct2}:{srvchallenge}"
+
+    json_data = json.dumps(data)
+    if args.output:
+        with open(args.output, 'w') as json_file:
+            json.dump(data, json_file, indent=4)
+    else:
+        print(json_data)
+import hashlib
+import binascii
+import argparse
+import json
+import time
+import os
+
+def calc_md5_challenge(client_challenge, lm_resp):
+    combined_challenge = client_challenge + lm_resp[0:16]
+    m = hashlib.md5()
+    m.update(binascii.unhexlify(combined_challenge))
+    return m.hexdigest()
+
+parser = argparse.ArgumentParser()
+parser.add_argument('--ntlmv1', help='NTLMv1 Hash in responder format', required=True)
+parser.add_argument('--hashcat', help='hashcat path, eg: ~/git/hashcat', required=False)
+parser.add_argument('--hcutils', help='hashcat-utils path, eg: ~/git/hashcat-utils', required=False)
+parser.add_argument('--json', help='if this is set to anything it will output json, eg: --json 1', required=False)
+parser.add_argument('--output', help='output to a file, specify filename', required=False)
+args = parser.parse_args()
+
+# Splitting the NTLMv1 hash field
+hashsplit = args.ntlmv1.split(':')
+challenge = hashsplit[5]
+lmresp = hashsplit[3]
+ntresp = hashsplit[4]
+ct3 = ntresp[32:48]
+data = {
+    'ntlmv1': args.ntlmv1,
+    'user': hashsplit[0],
+    'domain': hashsplit[2],
+    'challenge': challenge,
+    'lmresp': lmresp,
+    'ntresp': ntresp,
+    'ct3': ct3
+}
+
+# Processing for different LM Response Conditions
+if lmresp[20:48] != "0000000000000000000000000000":
+    ct1 = ntresp[0:16]
+    ct2 = ntresp[16:32]
+    ct3 = ntresp[32:48]
+    output_data = {
+        'hostname': hashsplit[2],
+        'username': hashsplit[0],
+        'challenge': challenge,
+        'lm_response': lmresp,
+        'nt_response': ntresp,
+        'ct1': ct1,
+        'ct2': ct2,
+        'ct3': ct3
+    }
+
+    if args.json is None:
+        print("Hash Split Data: ", str(hashsplit))
+        print("Hostname: ", hashsplit[2])
+        print("Username: ", hashsplit[0])
+        print("Challenge: ", challenge)
+        print("LM Response: ", lmresp)
+        print("NT Response: ", ntresp)
+        print("CT1: ", ct1)
+        print("CT2: ", ct2)
+        print("CT3: ", ct3)
+        print("To Calculate Final NTLM Hash:")
+        if args.hcutils:
+            print(f"{args.hcutils}/ct3_to_ntlm.bin {ct3} {challenge}")
+        else:
+            print(f"./ct3_to_ntlm.bin {ct3} {challenge}")
+        print("To crack with hashcat, use this file:")
+        print(f"echo \"{ct1}:{challenge}\" >> 14000.hash")
+        print(f"echo \"{ct2}:{challenge}\" >> 14000.hash")
+        print(f"hashcat -m 14000 -a 3 -1 {args.hashcat}/charsets/DES_full.charset --hex-charset 14000.hash ?1?1?1?1?1?1?1?1")
+
+if lmresp[20:48] == "0000000000000000000000000000":
+    clientchallenge = hashsplit[5]
+    md5hash = calc_md5_challenge(clientchallenge, lmresp)
+    srvchallenge = md5hash[0:16]
+    data['srvchallenge'] = srvchallenge
+    ct1 = ntresp[0:16]
+    ct2 = ntresp[16:32]
+
+    if args.json is None:
+        print(f"Hash response is ESS, consider using responder with --lm or --disable-ess with a static challenge of 1122334455667788")
+        print(f"Client Challenge: {clientchallenge}")
+        print(f"Combined Challenge: {clientchallenge + lmresp[0:16]}")
+        print(f"MD5 Hash of Combined Challenge: {md5hash}")
+        print(f"Server Challenge: {srvchallenge}")
+        print("To calculate final NTLM hash use:")
+        if args.hcutils:
+            print(f"{args.hcutils}/ct3_to_ntlm.bin {ct3} {clientchallenge} {lmresp}")
+        else:
+            print(f"./ct3_to_ntlm.bin {ct3} {clientchallenge} {lmresp}")
+        print("To crack with hashcat, use this file:")
+        print(f"echo \"{ct1}:{srvchallenge}\" >> 14000.hash")
+        print(f"echo \"{ct2}:{srvchallenge}\" >> 14000.hash")
+        print(f"hashcat -m 14000 -a 3 -1 {args.hashcat}/charsets/DES_full.charset --hex-charset 14000.hash ?1?1?1?1?1?1?1?1")
+
+if args.json is not None:
+    if lmresp[20:48] != "0000000000000000000000000000":
+        if args.hcutils:
+            data['ct3_crack'] = f"{args.hcutils}/ct3_to_ntlm.bin {ct3} {challenge}"
+        else:
+            data['ct3_crack'] = f"ct3_to_ntlm.bin {ct3} {challenge}"
+        data['hash1'] = f"{ct1}:{challenge}"
+        data['hash2'] = f"{ct2}:{challenge}"
+
+    if lmresp[20:48] == "0000000000000000000000000000":
+        if args.hcutils:
+            data['ct3_crack'] = f"{args.hcutils}/ct3_to_ntlm.bin {ct3} {clientchallenge} {lmresp}"
+        else:
+            data['ct3_crack'] = f"ct3_to_ntlm.bin {ct3} {clientchallenge} {lmresp}"
+        data['hash1'] = f"{ct1}:{srvchallenge}"
+        data['hash2'] = f"{ct2}:{srvchallenge}"
+
+    json_data = json.dumps(data)
+    if args.output:
+        with open(args.output, 'w') as json_file:
+            json.dump(data, json_file, indent=4)
+    else:
+        print(json_data)
+import hashlib
+import binascii
+import argparse
+import json
+import time
+import os
+
+def calc_md5_challenge(client_challenge, lm_resp):
+    combined_challenge = client_challenge + lm_resp[0:16]
+    m = hashlib.md5()
+    m.update(binascii.unhexlify(combined_challenge))
+    return m.hexdigest()
+
+parser = argparse.ArgumentParser()
+parser.add_argument('--ntlmv1', help='NTLMv1 Hash in responder format', required=True)
+parser.add_argument('--hashcat', help='hashcat path, eg: ~/git/hashcat', required=False)
+parser.add_argument('--hcutils', help='hashcat-utils path, eg: ~/git/hashcat-utils', required=False)
+parser.add_argument('--json', help='if this is set to anything it will output json, eg: --json 1', required=False)
+parser.add_argument('--output', help='output to a file, specify filename', required=False)
+args = parser.parse_args()
+
+# Splitting the NTLMv1 hash field
+hashsplit = args.ntlmv1.split(':')
+challenge = hashsplit[5]
+lmresp = hashsplit[3]
+ntresp = hashsplit[4]
+ct3 = ntresp[32:48]
+data = {
+    'ntlmv1': args.ntlmv1,
+    'user': hashsplit[0],
+    'domain': hashsplit[2],
+    'challenge': challenge,
+    'lmresp': lmresp,
+    'ntresp': ntresp,
+    'ct3': ct3
+}
+
+# Processing for different LM Response Conditions
+if lmresp[20:48] != "0000000000000000000000000000":
+    ct1 = ntresp[0:16]
+    ct2 = ntresp[16:32]
+    ct3 = ntresp[32:48]
+    output_data = {
+        'hostname': hashsplit[2],
+        'username': hashsplit[0],
+        'challenge': challenge,
+        'lm_response': lmresp,
+        'nt_response': ntresp,
+        'ct1': ct1,
+        'ct2': ct2,
+        'ct3': ct3
+    }
+
+    if args.json is None:
+        print("Hash Split Data: ", str(hashsplit))
+        print("Hostname: ", hashsplit[2])
+        print("Username: ", hashsplit[0])
+        print("Challenge: ", challenge)
+        print("LM Response: ", lmresp)
+        print("NT Response: ", ntresp)
+        print("CT1: ", ct1)
+        print("CT2: ", ct2)
+        print("CT3: ", ct3)
+        print("To Calculate Final NTLM Hash:")
+        if args.hcutils:
+            print(f"{args.hcutils}/ct3_to_ntlm.bin {ct3} {challenge}")
+        else:
+            print(f"./ct3_to_ntlm.bin {ct3} {challenge}")
+        print("To crack with hashcat, use this file:")
+        print(f"echo \"{ct1}:{challenge}\" >> 14000.hash")
+        print(f"echo \"{ct2}:{challenge}\" >> 14000.hash")
+        print(f"hashcat -m 14000 -a 3 -1 {args.hashcat}/charsets/DES_full.charset --hex-charset 14000.hash ?1?1?1?1?1?1?1?1")
+
+if lmresp[20:48] == "0000000000000000000000000000":
+    clientchallenge = hashsplit[5]
+    md5hash = calc_md5_challenge(clientchallenge, lmresp)
+    srvchallenge = md5hash[0:16]
+    data['srvchallenge'] = srvchallenge
+    ct1 = ntresp[0:16]
+    ct2 = ntresp[16:32]
+
+    if args.json is None:
+        print(f"Hash response is ESS, consider using responder with --lm or --disable-ess with a static challenge of 1122334455667788")
+        print(f"Client Challenge: {clientchallenge}")
+        print(f"Combined Challenge: {clientchallenge + lmresp[0:16]}")
+        print(f"MD5 Hash of Combined Challenge: {md5hash}")
+        print(f"Server Challenge: {srvchallenge}")
+        print("To calculate final NTLM hash use:")
+        if args.hcutils:
+            print(f"{args.hcutils}/ct3_to_ntlm.bin {ct3} {clientchallenge} {lmresp}")
+        else:
+            print(f"./ct3_to_ntlm.bin {ct3} {clientchallenge} {lmresp}")
+        print("To crack with hashcat, use this file:")
+        print(f"echo \"{ct1}:{srvchallenge}\" >> 14000.hash")
+        print(f"echo \"{ct2}:{srvchallenge}\" >> 14000.hash")
+        print(f"hashcat -m 14000 -a 3 -1 {args.hashcat}/charsets/DES_full.charset --hex-charset 14000.hash ?1?1?1?1?1?1?1?1")
+
+if args.json is not None:
+    if lmresp[20:48] != "0000000000000000000000000000":
+        if args.hcutils:
+            data['ct3_crack'] = f"{args.hcutils}/ct3_to_ntlm.bin {ct3} {challenge}"
+        else:
+            data['ct3_crack'] = f"ct3_to_ntlm.bin {ct3} {challenge}"
+        data['hash1'] = f"{ct1}:{challenge}"
+        data['hash2'] = f"{ct2}:{challenge}"
+
+    if lmresp[20:48] == "0000000000000000000000000000":
+        if args.hcutils:
+            data['ct3_crack'] = f"{args.hcutils}/ct3_to_ntlm.bin {ct3} {clientchallenge} {lmresp}"
+        else:
+            data['ct3_crack'] = f"ct3_to_ntlm.bin {ct3} {clientchallenge} {lmresp}"
+        data['hash1'] = f"{ct1}:{srvchallenge}"
+        data['hash2'] = f"{ct2}:{srvchallenge}"
+
+    json_data = json.dumps(data)
+    if args.output:
+        with open(args.output, 'w') as json_file:
+            json.dump(data, json_file, indent=4)
+    else:
+        print(json_data)
+import hashlib
+import binascii
+import argparse
+import json
+import time
+import os
+
+def calc_md5_challenge(client_challenge, lm_resp):
+    combined_challenge = client_challenge + lm_resp[0:16]
+    m = hashlib.md5()
+    m.update(binascii.unhexlify(combined_challenge))
+    return m.hexdigest()
+
+parser = argparse.ArgumentParser()
+parser.add_argument('--ntlmv1', help='NTLMv1 Hash in responder format', required=True)
+parser.add_argument('--hashcat', help='hashcat path, eg: ~/git/hashcat', required=False)
+parser.add_argument('--hcutils', help='hashcat-utils path, eg: ~/git/hashcat-utils', required=False)
+parser.add_argument('--json', help='if this is set to anything it will output json, eg: --json 1', required=False)
+parser.add_argument('--output', help='output to a file, specify filename', required=False)
+args = parser.parse_args()
+
+# Splitting the NTLMv1 hash field
+hashsplit = args.ntlmv1.split(':')
+challenge = hashsplit[5]
+lmresp = hashsplit[3]
+ntresp = hashsplit[4]
+ct3 = ntresp[32:48]
+data = {
+    'ntlmv1': args.ntlmv1,
+    'user': hashsplit[0],
+    'domain': hashsplit[2],
+    'challenge': challenge,
+    'lmresp': lmresp,
+    'ntresp': ntresp,
+    'ct3': ct3
+}
+
+# Processing for different LM Response Conditions
+if lmresp[20:48] != "0000000000000000000000000000":
+    ct1 = ntresp[0:16]
+    ct2 = ntresp[16:32]
+    ct3 = ntresp[32:48]
+    output_data = {
+        'hostname': hashsplit[2],
+        'username': hashsplit[0],
+        'challenge': challenge,
+        'lm_response': lmresp,
+        'nt_response': ntresp,
+        'ct1': ct1,
+        'ct2': ct2,
+        'ct3': ct3
+    }
+
+    if args.json is None:
+        print("Hash Split Data: ", str(hashsplit))
+        print("Hostname: ", hashsplit[2])
+        print("Username: ", hashsplit[0])
+        print("Challenge: ", challenge)
+        print("LM Response: ", lmresp)
+        print("NT Response: ", ntresp)
+        print("CT1: ", ct1)
+        print("CT2: ", ct2)
+        print("CT3: ", ct3)
+        print("To Calculate Final NTLM Hash:")
+        if args.hcutils:
+            print(f"{args.hcutils}/ct3_to_ntlm.bin {ct3} {challenge}")
+        else:
+            print(f"./ct3_to_ntlm.bin {ct3} {challenge}")
+        print("To crack with hashcat, use this file:")
+        print(f"echo \"{ct1}:{challenge}\" >> 14000.hash")
+        print(f"echo \"{ct2}:{challenge}\" >> 14000.hash")
+        print(f"hashcat -m 14000 -a 3 -1 {args.hashcat}/charsets/DES_full.charset --hex-charset 14000.hash ?1?1?1?1?1?1?1?1")
+
+if lmresp[20:48] == "0000000000000000000000000000":
+    clientchallenge = hashsplit[5]
+    md5hash = calc_md5_challenge(clientchallenge, lmresp)
+    srvchallenge = md5hash[0:16]
+    data['srvchallenge'] = srvchallenge
+    ct1 = ntresp[0:16]
+    ct2 = ntresp[16:32]
+
+    if args.json is None:
+        print(f"Hash response is ESS, consider using responder with --lm or --disable-ess with a static challenge of 1122334455667788")
+        print(f"Client Challenge: {clientchallenge}")
+        print(f"Combined Challenge: {clientchallenge + lmresp[0:16]}")
+        print(f"MD5 Hash of Combined Challenge: {md5hash}")
+        print(f"Server Challenge: {srvchallenge}")
+        print("To calculate final NTLM hash use:")
+        if args.hcutils:
+            print(f"{args.hcutils}/ct3_to_ntlm.bin {ct3} {clientchallenge} {lmresp}")
+        else:
+            print(f"./ct3_to_ntlm.bin {ct3} {clientchallenge} {lmresp}")
+        print("To crack with hashcat, use this file:")
+        print(f"echo \"{ct1}:{srvchallenge}\" >> 14000.hash")
+        print(f"echo \"{ct2}:{srvchallenge}\" >> 14000.hash")
+        print(f"hashcat -m 14000 -a 3 -1 {args.hashcat}/charsets/DES_full.charset --hex-charset 14000.hash ?1?1?1?1?1?1?1?1")
+
+if args.json is not None:
+    if lmresp[20:48] != "0000000000000000000000000000":
+        if args.hcutils:
+            data['ct3_crack'] = f"{args.hcutils}/ct3_to_ntlm.bin {ct3} {challenge}"
+        else:
+            data['ct3_crack'] = f"ct3_to_ntlm.bin {ct3} {challenge}"
+        data['hash1'] = f"{ct1}:{challenge}"
+        data['hash2'] = f"{ct2}:{challenge}"
+
+    if lmresp[20:48] == "0000000000000000000000000000":
+        if args.hcutils:
+            data['ct3_crack'] = f"{args.hcutils}/ct3_to_ntlm.bin {ct3} {clientchallenge} {lmresp}"
+        else:
+            data['ct3_crack'] = f"ct3_to_ntlm.bin {ct3} {clientchallenge} {lmresp}"
+        data['hash1'] = f"{ct1}:{srvchallenge}"
+        data['hash2'] = f"{ct2}:{srvchallenge}"
+
+    json_data = json.dumps(data)
+    if args.output:
+        with open(args.output, 'w') as json_file:
+            json.dump(data, json_file, indent=4)
+    else:
+        print(json_data)
+import hashlib
+import binascii
+import argparse
+import json
+import time
+import os
+
+def calc_md5_challenge(client_challenge, lm_resp):
+    combined_challenge = client_challenge + lm_resp[0:16]
+    m = hashlib.md5()
+    m.update(binascii.unhexlify(combined_challenge))
+    return m.hexdigest()
+
+parser = argparse.ArgumentParser()
+parser.add_argument('--ntlmv1', help='NTLMv1 Hash in responder format', required=True)
+parser.add_argument('--hashcat', help='hashcat path, eg: ~/git/hashcat', required=False)
+parser.add_argument('--hcutils', help='hashcat-utils path, eg: ~/git/hashcat-utils', required=False)
+parser.add_argument('--json', help='if this is set to anything it will output json, eg: --json 1', required=False)
+parser.add_argument('--output', help='output to a file, specify filename', required=False)
+args = parser.parse_args()
+
+# Splitting the NTLMv1 hash field
+hashsplit = args.ntlmv1.split(':')
+challenge = hashsplit[5]
+lmresp = hashsplit[3]
+ntresp = hashsplit[4]
+ct3 = ntresp[32:48]
+data = {
+    'ntlmv1': args.ntlmv1,
+    'user': hashsplit[0],
+    'domain': hashsplit[2],
+    'challenge': challenge,
+    'lmresp': lmresp,
+    'ntresp': ntresp,
+    'ct3': ct3
+}
+
+# Processing for different LM Response Conditions
+if lmresp[20:48] != "0000000000000000000000000000":
+    ct1 = ntresp[0:16]
+    ct2 = ntresp[16:32]
+    ct3 = ntresp[32:48]
+    output_data = {
+        'hostname': hashsplit[2],
+        'username': hashsplit[0],
+        'challenge': challenge,
+        'lm_response': lmresp,
+        'nt_response': ntresp,
+        'ct1': ct1,
+        'ct2': ct2,
+        'ct3': ct3
+    }
+
+    if args.json is None:
+        print("Hash Split Data: ", str(hashsplit))
+        print("Hostname: ", hashsplit[2])
+        print("Username: ", hashsplit[0])
+        print("Challenge: ", challenge)
+        print("LM Response: ", lmresp)
+        print("NT Response: ", ntresp)
+        print("CT1: ", ct1)
+        print("CT2: ", ct2)
+        print("CT3: ", ct3)
+        print("To Calculate Final NTLM Hash:")
+        if args.hcutils:
+            print(f"{args.hcutils}/ct3_to_ntlm.bin {ct3} {challenge}")
+        else:
+            print(f"./ct3_to_ntlm.bin {ct3} {challenge}")
+        print("To crack with hashcat, use this file:")
+        print(f"echo \"{ct1}:{challenge}\" >> 14000.hash")
+        print(f"echo \"{ct2}:{challenge}\" >> 14000.hash")
+        print(f"hashcat -m 14000 -a 3 -1 {args.hashcat}/charsets/DES_full.charset --hex-charset 14000.hash ?1?1?1?1?1?1?1?1")
+
+if lmresp[20:48] == "0000000000000000000000000000":
+    clientchallenge = hashsplit[5]
+    md5hash = calc_md5_challenge(clientchallenge, lmresp)
+    srvchallenge = md5hash[0:16]
+    data['srvchallenge'] = srvchallenge
+    ct1 = ntresp[0:16]
+    ct2 = ntresp[16:32]
+
+    if args.json is None:
+        print(f"Hash response is ESS, consider using responder with --lm or --disable-ess with a static challenge of 1122334455667788")
+        print(f"Client Challenge: {clientchallenge}")
+        print(f"Combined Challenge: {clientchallenge + lmresp[0:16]}")
+        print(f"MD5 Hash of Combined Challenge: {md5hash}")
+        print(f"Server Challenge: {srvchallenge}")
+        print("To calculate final NTLM hash use:")
+        if args.hcutils:
+            print(f"{args.hcutils}/ct3_to_ntlm.bin {ct3} {clientchallenge} {lmresp}")
+        else:
+            print(f"./ct3_to_ntlm.bin {ct3} {clientchallenge} {lmresp}")
+        print("To crack with hashcat, use this file:")
+        print(f"echo \"{ct1}:{srvchallenge}\" >> 14000.hash")
+        print(f"echo \"{ct2}:{srvchallenge}\" >> 14000.hash")
+        print(f"hashcat -m 14000 -a 3 -1 {args.hashcat}/charsets/DES_full.charset --hex-charset 14000.hash ?1?1?1?1?1?1?1?1")
+
+if args.json is not None:
+    if lmresp[20:48] != "0000000000000000000000000000":
+        if args.hcutils:
+            data['ct3_crack'] = f"{args.hcutils}/ct3_to_ntlm.bin {ct3} {challenge}"
+        else:
+            data['ct3_crack'] = f"ct3_to_ntlm.bin {ct3} {challenge}"
+        data['hash1'] = f"{ct1}:{challenge}"
+        data['hash2'] = f"{ct2}:{challenge}"
+
+    if lmresp[20:48] == "0000000000000000000000000000":
+        if args.hcutils:
+            data['ct3_crack'] = f"{args.hcutils}/ct3_to_ntlm.bin {ct3} {clientchallenge} {lmresp}"
+        else:
+            data['ct3_crack'] = f"ct3_to_ntlm.bin {ct3} {clientchallenge} {lmresp}"
+        data['hash1'] = f"{ct1}:{srvchallenge}"
+        data['hash2'] = f"{ct2}:{srvchallenge}"
+
+    json_data = json.dumps(data)
+    if args.output:
+        with open(args.output, 'w') as json_file:
+            json.dump(data, json_file, indent=4)
+    else:
+        print(json_data)
+import hashlib
+import binascii
+import argparse
+import json
+import time
+import os
+
+def calc_md5_challenge(client_challenge, lm_resp):
+    combined_challenge = client_challenge + lm_resp[0:16]
+    m = hashlib.md5()
+    m.update(binascii.unhexlify(combined_challenge))
+    return m.hexdigest()
+
+parser = argparse.ArgumentParser()
+parser.add_argument('--ntlmv1', help='NTLMv1 Hash in responder format', required=True)
+parser.add_argument('--hashcat', help='hashcat path, eg: ~/git/hashcat', required=False)
+parser.add_argument('--hcutils', help='hashcat-utils path, eg: ~/git/hashcat-utils', required=False)
+parser.add_argument('--json', help='if this is set to anything it will output json, eg: --json 1', required=False)
+parser.add_argument('--output', help='output to a file, specify filename', required=False)
+args = parser.parse_args()
+
+# Splitting the NTLMv1 hash field
+hashsplit = args.ntlmv1.split(':')
+challenge = hashsplit[5]
+lmresp = hashsplit[3]
+ntresp = hashsplit[4]
+ct3 = ntresp[32:48]
+data = {
+    'ntlmv1': args.ntlmv1,
+    'user': hashsplit[0],
+    'domain': hashsplit[2],
+    'challenge': challenge,
+    'lmresp': lmresp,
+    'ntresp': ntresp,
+    'ct3': ct3
+}
+
+# Processing for different LM Response Conditions
+if lmresp[20:48] != "0000000000000000000000000000":
+    ct1 = ntresp[0:16]
+    ct2 = ntresp[16:32]
+    ct3 = ntresp[32:48]
+    output_data = {
+        'hostname': hashsplit[2],
+        'username': hashsplit[0],
+        'challenge': challenge,
+        'lm_response': lmresp,
+        'nt_response': ntresp,
+        'ct1': ct1,
+        'ct2': ct2,
+        'ct3': ct3
+    }
+
+    if args.json is None:
+        print("Hash Split Data: ", str(hashsplit))
+        print("Hostname: ", hashsplit[2])
+        print("Username: ", hashsplit[0])
+        print("Challenge: ", challenge)
+        print("LM Response: ", lmresp)
+        print("NT Response: ", ntresp)
+        print("CT1: ", ct1)
+        print("CT2: ", ct2)
+        print("CT3: ", ct3)
+        print("To Calculate Final NTLM Hash:")
+        if args.hcutils:
+            print(f"{args.hcutils}/ct3_to_ntlm.bin {ct3} {challenge}")
+        else:
+            print(f"./ct3_to_ntlm.bin {ct3} {challenge}")
+        print("To crack with hashcat, use this file:")
+        print(f"echo \"{ct1}:{challenge}\" >> 14000.hash")
+        print(f"echo \"{ct2}:{challenge}\" >> 14000.hash")
+        print(f"hashcat -m 14000 -a 3 -1 {args.hashcat}/charsets/DES_full.charset --hex-charset 14000.hash ?1?1?1?1?1?1?1?1")
+
+if lmresp[20:48] == "0000000000000000000000000000":
+    clientchallenge = hashsplit[5]
+    md5hash = calc_md5_challenge(clientchallenge, lmresp)
+    srvchallenge = md5hash[0:16]
+    data['srvchallenge'] = srvchallenge
+    ct1 = ntresp[0:16]
+    ct2 = ntresp[16:32]
+
+    if args.json is None:
+        print(f"Hash response is ESS, consider using responder with --lm or --disable-ess with a static challenge of 1122334455667788")
+        print(f"Client Challenge: {clientchallenge}")
+        print(f"Combined Challenge: {clientchallenge + lmresp[0:16]}")
+        print(f"MD5 Hash of Combined Challenge: {md5hash}")
+        print(f"Server Challenge: {srvchallenge}")
+        print("To calculate final NTLM hash use:")
+        if args.hcutils:
+            print(f"{args.hcutils}/ct3_to_ntlm.bin {ct3} {clientchallenge} {lmresp}")
+        else:
+            print(f"./ct3_to_ntlm.bin {ct3} {clientchallenge} {lmresp}")
+        print("To crack with hashcat, use this file:")
+        print(f"echo \"{ct1}:{srvchallenge}\" >> 14000.hash")
+        print(f"echo \"{ct2}:{srvchallenge}\" >> 14000.hash")
+        print(f"hashcat -m 14000 -a 3 -1 {args.hashcat}/charsets/DES_full.charset --hex-charset 14000.hash ?1?1?1?1?1?1?1?1")
+
+if args.json is not None:
+    if lmresp[20:48] != "0000000000000000000000000000":
+        if args.hcutils:
+            data['ct3_crack'] = f"{args.hcutils}/ct3_to_ntlm.bin {ct3} {challenge}"
+        else:
+            data['ct3_crack'] = f"ct3_to_ntlm.bin {ct3} {challenge}"
+        data['hash1'] = f"{ct1}:{challenge}"
+        data['hash2'] = f"{ct2}:{challenge}"
+
+    if lmresp[20:48] == "0000000000000000000000000000":
+        if args.hcutils:
+            data['ct3_crack'] = f"{args.hcutils}/ct3_to_ntlm.bin {ct3} {clientchallenge} {lmresp}"
+        else:
+            data['ct3_crack'] = f"ct3_to_ntlm.bin {ct3} {clientchallenge} {lmresp}"
+        data['hash1'] = f"{ct1}:{srvchallenge}"
+        data['hash2'] = f"{ct2}:{srvchallenge}"
+
+    json_data = json.dumps(data)
+    if args.output:
+        with open(args.output, 'w') as json_file:
+            json.dump(data, json_file, indent=4)
+    else:
+        print(json_data)
+import hashlib
+import binascii
+import argparse
+import json
+import time
+import os
+
+def calc_md5_challenge(client_challenge, lm_resp):
+    combined_challenge = client_challenge + lm_resp[0:16]
+    m = hashlib.md5()
+    m.update(binascii.unhexlify(combined_challenge))
+    return m.hexdigest()
+
+parser = argparse.ArgumentParser()
+parser.add_argument('--ntlmv1', help='NTLMv1 Hash in responder format', required=True)
+parser.add_argument('--hashcat', help='hashcat path, eg: ~/git/hashcat', required=False)
+parser.add_argument('--hcutils', help='hashcat-utils path, eg: ~/git/hashcat-utils', required=False)
+parser.add_argument('--json', help='if this is set to anything it will output json, eg: --json 1', required=False)
+parser.add_argument('--output', help='output to a file, specify filename', required=False)
+args = parser.parse_args()
+
+# Splitting the NTLMv1 hash field
+hashsplit = args.ntlmv1.split(':')
+challenge = hashsplit[5]
+lmresp = hashsplit[3]
+ntresp = hashsplit[4]
+ct3 = ntresp[32:48]
+data = {
+    'ntlmv1': args.ntlmv1,
+    'user': hashsplit[0],
+    'domain': hashsplit[2],
+    'challenge': challenge,
+    'lmresp': lmresp,
+    'ntresp': ntresp,
+    'ct3': ct3
+}
+
+# Processing for different LM Response Conditions
+if lmresp[20:48] != "0000000000000000000000000000":
+    ct1 = ntresp[0:16]
+    ct2 = ntresp[16:32]
+    ct3 = ntresp[32:48]
+    output_data = {
+        'hostname': hashsplit[2],
+        'username': hashsplit[0],
+        'challenge': challenge,
+        'lm_response': lmresp,
+        'nt_response': ntresp,
+        'ct1': ct1,
+        'ct2': ct2,
+        'ct3': ct3
+    }
+
+    if args.json is None:
+        print("Hash Split Data: ", str(hashsplit))
+        print("Hostname: ", hashsplit[2])
+        print("Username: ", hashsplit[0])
+        print("Challenge: ", challenge)
+        print("LM Response: ", lmresp)
+        print("NT Response: ", ntresp)
+        print("CT1: ", ct1)
+        print("CT2: ", ct2)
+        print("CT3: ", ct3)
+        print("To Calculate Final NTLM Hash:")
+        if args.hcutils:
+            print(f"{args.hcutils}/ct3_to_ntlm.bin {ct3} {challenge}")
+        else:
+            print(f"./ct3_to_ntlm.bin {ct3} {challenge}")
+        print("To crack with hashcat, use this file:")
+        print(f"echo \"{ct1}:{challenge}\" >> 14000.hash")
+        print(f"echo \"{ct2}:{challenge}\" >> 14000.hash")
+        print(f"hashcat -m 14000 -a 3 -1 {args.hashcat}/charsets/DES_full.charset --hex-charset 14000.hash ?1?1?1?1?1?1?1?1")
+
+if lmresp[20:48] == "0000000000000000000000000000":
+    clientchallenge = hashsplit[5]
+    md5hash = calc_md5_challenge(clientchallenge, lmresp)
+    srvchallenge = md5hash[0:16]
+    data['srvchallenge'] = srvchallenge
+    ct1 = ntresp[0:16]
+    ct2 = ntresp[16:32]
+
+    if args.json is None:
+        print(f"Hash response is ESS, consider using responder with --lm or --disable-ess with a static challenge of 1122334455667788")
+        print(f"Client Challenge: {clientchallenge}")
+        print(f"Combined Challenge: {clientchallenge + lmresp[0:16]}")
+        print(f"MD5 Hash of Combined Challenge: {md5hash}")
+        print(f"Server Challenge: {srvchallenge}")
+        print("To calculate final NTLM hash use:")
+        if args.hcutils:
+            print(f"{args.hcutils}/ct3_to_ntlm.bin {ct3} {clientchallenge} {lmresp}")
+        else:
+            print(f"./ct3_to_ntlm.bin {ct3} {clientchallenge} {lmresp}")
+        print("To crack with hashcat, use this file:")
+        print(f"echo \"{ct1}:{srvchallenge}\" >> 14000.hash")
+        print(f"echo \"{ct2}:{srvchallenge}\" >> 14000.hash")
+        print(f"hashcat -m 14000 -a 3 -1 {args.hashcat}/charsets/DES_full.charset --hex-charset 14000.hash ?1?1?1?1?1?1?1?1")
+
+if args.json is not None:
+    if lmresp[20:48] != "0000000000000000000000000000":
+        if args.hcutils:
+            data['ct3_crack'] = f"{args.hcutils}/ct3_to_ntlm.bin {ct3} {challenge}"
+        else:
+            data['ct3_crack'] = f"ct3_to_ntlm.bin {ct3} {challenge}"
+        data['hash1'] = f"{ct1}:{challenge}"
+        data['hash2'] = f"{ct2}:{challenge}"
+
+    if lmresp[20:48] == "0000000000000000000000000000":
+        if args.hcutils:
+            data['ct3_crack'] = f"{args.hcutils}/ct3_to_ntlm.bin {ct3} {clientchallenge} {lmresp}"
+        else:
+            data['ct3_crack'] = f"ct3_to_ntlm.bin {ct3} {clientchallenge} {lmresp}"
+        data['hash1'] = f"{ct1}:{srvchallenge}"
+        data['hash2'] = f"{ct2}:{srvchallenge}"
+
+    json_data = json.dumps(data)
+    if args.output:
+        with open(args.output, 'w') as json_file:
+            json.dump(data, json_file, indent=4)
+    else:
+        print(json_data)
+import hashlib
+import binascii
+import argparse
+import json
+import time
+import os
+
+def calc_md5_challenge(client_challenge, lm_resp):
+    combined_challenge = client_challenge + lm_resp[0:16]
+    m = hashlib.md5()
+    m.update(binascii.unhexlify(combined_challenge))
+    return m.hexdigest()
+
+parser = argparse.ArgumentParser()
+parser.add_argument('--ntlmv1', help='NTLMv1 Hash in responder format', required=True)
+parser.add_argument('--hashcat', help='hashcat path, eg: ~/git/hashcat', required=False)
+parser.add_argument('--hcutils', help='hashcat-utils path, eg: ~/git/hashcat-utils', required=False)
+parser.add_argument('--json', help='if this is set to anything it will output json, eg: --json 1', required=False)
+parser.add_argument('--output', help='output to a file, specify filename', required=False)
+args = parser.parse_args()
+
+# Splitting the NTLMv1 hash field
+hashsplit = args.ntlmv1.split(':')
+challenge = hashsplit[5]
+lmresp = hashsplit[3]
+ntresp = hashsplit[4]
+ct3 = ntresp[32:48]
+data = {
+    'ntlmv1': args.ntlmv1,
+    'user': hashsplit[0],
+    'domain': hashsplit[2],
+    'challenge': challenge,
+    'lmresp': lmresp,
+    'ntresp': ntresp,
+    'ct3': ct3
+}
+
+# Processing for different LM Response Conditions
+if lmresp[20:48] != "0000000000000000000000000000":
+    ct1 = ntresp[0:16]
+    ct2 = ntresp[16:32]
+    ct3 = ntresp[32:48]
+    output_data = {
+        'hostname': hashsplit[2],
+        'username': hashsplit[0],
+        'challenge': challenge,
+        'lm_response': lmresp,
+        'nt_response': ntresp,
+        'ct1': ct1,
+        'ct2': ct2,
+        'ct3': ct3
+    }
+
+    if args.json is None:
+        print("Hash Split Data: ", str(hashsplit))
+        print("Hostname: ", hashsplit[2])
+        print("Username: ", hashsplit[0])
+        print("Challenge: ", challenge)
+        print("LM Response: ", lmresp)
+        print("NT Response: ", ntresp)
+        print("CT1: ", ct1)
+        print("CT2: ", ct2)
+        print("CT3: ", ct3)
+        print("To Calculate Final NTLM Hash:")
+        if args.hcutils:
+            print(f"{args.hcutils}/ct3_to_ntlm.bin {ct3} {challenge}")
+        else:
+            print(f"./ct3_to_ntlm.bin {ct3} {challenge}")
+        print("To crack with hashcat, use this file:")
+        print(f"echo \"{ct1}:{challenge}\" >> 14000.hash")
+        print(f"echo \"{ct2}:{challenge}\" >> 14000.hash")
+        print(f"hashcat -m 14000 -a 3 -1 {args.hashcat}/charsets/DES_full.charset --hex-charset 14000.hash ?1?1?1?1?1?1?1?1")
+
+if lmresp[20:48] == "0000000000000000000000000000":
+    clientchallenge = hashsplit[5]
+    md5hash = calc_md5_challenge(clientchallenge, lmresp)
+    srvchallenge = md5hash[0:16]
+    data['srvchallenge'] = srvchallenge
+    ct1 = ntresp[0:16]
+    ct2 = ntresp[16:32]
+
+    if args.json is None:
+        print(f"Hash response is ESS, consider using responder with --lm or --disable-ess with a static challenge of 1122334455667788")
+        print(f"Client Challenge: {clientchallenge}")
+        print(f"Combined Challenge: {clientchallenge + lmresp[0:16]}")
+        print(f"MD5 Hash of Combined Challenge: {md5hash}")
+        print(f"Server Challenge: {srvchallenge}")
+        print("To calculate final NTLM hash use:")
+        if args.hcutils:
+            print(f"{args.hcutils}/ct3_to_ntlm.bin {ct3} {clientchallenge} {lmresp}")
+        else:
+            print(f"./ct3_to_ntlm.bin {ct3} {clientchallenge} {lmresp}")
+        print("To crack with hashcat, use this file:")
+        print(f"echo \"{ct1}:{srvchallenge}\" >> 14000.hash")
+        print(f"echo \"{ct2}:{srvchallenge}\" >> 14000.hash")
+        print(f"hashcat -m 14000 -a 3 -1 {args.hashcat}/charsets/DES_full.charset --hex-charset 14000.hash ?1?1?1?1?1?1?1?1")
+
+if args.json is not None:
+    if lmresp[20:48] != "0000000000000000000000000000":
+        if args.hcutils:
+            data['ct3_crack'] = f"{args.hcutils}/ct3_to_ntlm.bin {ct3} {challenge}"
+        else:
+            data['ct3_crack'] = f"ct3_to_ntlm.bin {ct3} {challenge}"
+        data['hash1'] = f"{ct1}:{challenge}"
+        data['hash2'] = f"{ct2}:{challenge}"
+
+    if lmresp[20:48] == "0000000000000000000000000000":
+        if args.hcutils:
+            data['ct3_crack'] = f"{args.hcutils}/ct3_to_ntlm.bin {ct3} {clientchallenge} {lmresp}"
+        else:
+            data['ct3_crack'] = f"ct3_to_ntlm.bin {ct3} {clientchallenge} {lmresp}"
+        data['hash1'] = f"{ct1}:{srvchallenge}"
+        data['hash2'] = f"{ct2}:{srvchallenge}"
+
+    json_data = json.dumps(data)
+    if args.output:
+        with open(args.output, 'w') as json_file:
+            json.dump(data, json_file, indent=4)
+    else:
+        print(json_data)
+import hashlib
+import binascii
+import argparse
+import json
+import time
+import os
+
+def calc_md5_challenge(client_challenge, lm_resp):
+    combined_challenge = client_challenge + lm_resp[0:16]
+    m = hashlib.md5()
+    m.update(binascii.unhexlify(combined_challenge))
+    return m.hexdigest()
+
+parser = argparse.ArgumentParser()
+parser.add_argument('--ntlmv1', help='NTLMv1 Hash in responder format', required=True)
+parser.add_argument('--hashcat', help='hashcat path, eg: ~/git/hashcat', required=False)
+parser.add_argument('--hcutils', help='hashcat-utils path, eg: ~/git/hashcat-utils', required=False)
+parser.add_argument('--json', help='if this is set to anything it will output json, eg: --json 1', required=False)
+parser.add_argument('--output', help='output to a file, specify filename', required=False)
+args = parser.parse_args()
+
+# Splitting the NTLMv1 hash field
+hashsplit = args.ntlmv1.split(':')
+challenge = hashsplit[5]
+lmresp = hashsplit[3]
+ntresp = hashsplit[4]
+ct3 = ntresp[32:48]
+data = {
+    'ntlmv1': args.ntlmv1,
+    'user': hashsplit[0],
+    'domain': hashsplit[2],
+    'challenge': challenge,
+    'lmresp': lmresp,
+    'ntresp': ntresp,
+    'ct3': ct3
+}
+
+# Processing for different LM Response Conditions
+if lmresp[20:48] != "0000000000000000000000000000":
+    ct1 = ntresp[0:16]
+    ct2 = ntresp[16:32]
+    ct3 = ntresp[32:48]
+    output_data = {
+        'hostname': hashsplit[2],
+        'username': hashsplit[0],
+        'challenge': challenge,
+        'lm_response': lmresp,
+        'nt_response': ntresp,
+        'ct1': ct1,
+        'ct2': ct2,
+        'ct3': ct3
+    }
+
+    if args.json is None:
+        print("Hash Split Data: ", str(hashsplit))
+        print("Hostname: ", hashsplit[2])
+        print("Username: ", hashsplit[0])
+        print("Challenge: ", challenge)
+        print("LM Response: ", lmresp)
+        print("NT Response: ", ntresp)
+        print("CT1: ", ct1)
+        print("CT2: ", ct2)
+        print("CT3: ", ct3)
+        print("To Calculate Final NTLM Hash:")
+        if args.hcutils:
+            print(f"{args.hcutils}/ct3_to_ntlm.bin {ct3} {challenge}")
+        else:
+            print(f"./ct3_to_ntlm.bin {ct3} {challenge}")
+        print("To crack with hashcat, use this file:")
+        print(f"echo \"{ct1}:{challenge}\" >> 14000.hash")
+        print(f"echo \"{ct2}:{challenge}\" >> 14000.hash")
+        print(f"hashcat -m 14000 -a 3 -1 {args.hashcat}/charsets/DES_full.charset --hex-charset 14000.hash ?1?1?1?1?1?1?1?1")
+
+if lmresp[20:48] == "0000000000000000000000000000":
+    clientchallenge = hashsplit[5]
+    md5hash = calc_md5_challenge(clientchallenge, lmresp)
+    srvchallenge = md5hash[0:16]
+    data['srvchallenge'] = srvchallenge
+    ct1 = ntresp[0:16]
+    ct2 = ntresp[16:32]
+
+    if args.json is None:
+        print(f"Hash response is ESS, consider using responder with --lm or --disable-ess with a static challenge of 1122334455667788")
+        print(f"Client Challenge: {clientchallenge}")
+        print(f"Combined Challenge: {clientchallenge + lmresp[0:16]}")
+        print(f"MD5 Hash of Combined Challenge: {md5hash}")
+        print(f"Server Challenge: {srvchallenge}")
+        print("To calculate final NTLM hash use:")
+        if args.hcutils:
+            print(f"{args.hcutils}/ct3_to_ntlm.bin {ct3} {clientchallenge} {lmresp}")
+        else:
+            print(f"./ct3_to_ntlm.bin {ct3} {clientchallenge} {lmresp}")
+        print("To crack with hashcat, use this file:")
+        print(f"echo \"{ct1}:{srvchallenge}\" >> 14000.hash")
+        print(f"echo \"{ct2}:{srvchallenge}\" >> 14000.hash")
+        print(f"hashcat -m 14000 -a 3 -1 {args.hashcat}/charsets/DES_full.charset --hex-charset 14000.hash ?1?1?1?1?1?1?1?1")
+
+if args.json is not None:
+    if lmresp[20:48] != "0000000000000000000000000000":
+        if args.hcutils:
+            data['ct3_crack'] = f"{args.hcutils}/ct3_to_ntlm.bin {ct3} {challenge}"
+        else:
+            data['ct3_crack'] = f"ct3_to_ntlm.bin {ct3} {challenge}"
+        data['hash1'] = f"{ct1}:{challenge}"
+        data['hash2'] = f"{ct2}:{challenge}"
+
+    if lmresp[20:48] == "0000000000000000000000000000":
+        if args.hcutils:
+            data['ct3_crack'] = f"{args.hcutils}/ct3_to_ntlm.bin {ct3} {clientchallenge} {lmresp}"
+        else:
+            data['ct3_crack'] = f"ct3_to_ntlm.bin {ct3} {clientchallenge} {lmresp}"
+        data['hash1'] = f"{ct1}:{srvchallenge}"
+        data['hash2'] = f"{ct2}:{srvchallenge}"
+
+    json_data = json.dumps(data)
+    if args.output:
+        with open(args.output, 'w') as json_file:
+            json.dump(data, json_file, indent=4)
+    else:
+        print(json_data)
+import hashlib
+import binascii
+import argparse
+import json
+import time
+import os
+
+def calc_md5_challenge(client_challenge, lm_resp):
+    combined_challenge = client_challenge + lm_resp[0:16]
+    m = hashlib.md5()
+    m.update(binascii.unhexlify(combined_challenge))
+    return m.hexdigest()
+
+parser = argparse.ArgumentParser()
+parser.add_argument('--ntlmv1', help='NTLMv1 Hash in responder format', required=True)
+parser.add_argument('--hashcat', help='hashcat path, eg: ~/git/hashcat', required=False)
+parser.add_argument('--hcutils', help='hashcat-utils path, eg: ~/git/hashcat-utils', required=False)
+parser.add_argument('--json', help='if this is set to anything it will output json, eg: --json 1', required=False)
+parser.add_argument('--output', help='output to a file, specify filename', required=False)
+args = parser.parse_args()
+
+# Splitting the NTLMv1 hash field
+hashsplit = args.ntlmv1.split(':')
+challenge = hashsplit[5]
+lmresp = hashsplit[3]
+ntresp = hashsplit[4]
+ct3 = ntresp[32:48]
+data = {
+    'ntlmv1': args.ntlmv1,
+    'user': hashsplit[0],
+    'domain': hashsplit[2],
+    'challenge': challenge,
+    'lmresp': lmresp,
+    'ntresp': ntresp,
+    'ct3': ct3
+}
+
+# Processing for different LM Response Conditions
+if lmresp[20:48] != "0000000000000000000000000000":
+    ct1 = ntresp[0:16]
+    ct2 = ntresp[16:32]
+    ct3 = ntresp[32:48]
+    output_data = {
+        'hostname': hashsplit[2],
+        'username': hashsplit[0],
+        'challenge': challenge,
+        'lm_response': lmresp,
+        'nt_response': ntresp,
+        'ct1': ct1,
+        'ct2': ct2,
+        'ct3': ct3
+    }
+
+    if args.json is None:
+        print("Hash Split Data: ", str(hashsplit))
+        print("Hostname: ", hashsplit[2])
+        print("Username: ", hashsplit[0])
+        print("Challenge: ", challenge)
+        print("LM Response: ", lmresp)
+        print("NT Response: ", ntresp)
+        print("CT1: ", ct1)
+        print("CT2: ", ct2)
+        print("CT3: ", ct3)
+        print("To Calculate Final NTLM Hash:")
+        if args.hcutils:
+            print(f"{args.hcutils}/ct3_to_ntlm.bin {ct3} {challenge}")
+        else:
+            print(f"./ct3_to_ntlm.bin {ct3} {challenge}")
+        print("To crack with hashcat, use this file:")
+        print(f"echo \"{ct1}:{challenge}\" >> 14000.hash")
+        print(f"echo \"{ct2}:{challenge}\" >> 14000.hash")
+        print(f"hashcat -m 14000 -a 3 -1 {args.hashcat}/charsets/DES_full.charset --hex-charset 14000.hash ?1?1?1?1?1?1?1?1")
+
+if lmresp[20:48] == "0000000000000000000000000000":
+    clientchallenge = hashsplit[5]
+    md5hash = calc_md5_challenge(clientchallenge, lmresp)
+    srvchallenge = md5hash[0:16]
+    data['srvchallenge'] = srvchallenge
+    ct1 = ntresp[0:16]
+    ct2 = ntresp[16:32]
+
+    if args.json is None:
+        print(f"Hash response is ESS, consider using responder with --lm or --disable-ess with a static challenge of 1122334455667788")
+        print(f"Client Challenge: {clientchallenge}")
+        print(f"Combined Challenge: {clientchallenge + lmresp[0:16]}")
+        print(f"MD5 Hash of Combined Challenge: {md5hash}")
+        print(f"Server Challenge: {srvchallenge}")
+        print("To calculate final NTLM hash use:")
+        if args.hcutils:
+            print(f"{args.hcutils}/ct3_to_ntlm.bin {ct3} {clientchallenge} {lmresp}")
+        else:
+            print(f"./ct3_to_ntlm.bin {ct3} {clientchallenge} {lmresp}")
+        print("To crack with hashcat, use this file:")
+        print(f"echo \"{ct1}:{srvchallenge}\" >> 14000.hash")
+        print(f"echo \"{ct2}:{srvchallenge}\" >> 14000.hash")
+        print(f"hashcat -m 14000 -a 3 -1 {args.hashcat}/charsets/DES_full.charset --hex-charset 14000.hash ?1?1?1?1?1?1?1?1")
+
+if args.json is not None:
+    if lmresp[20:48] != "0000000000000000000000000000":
+        if args.hcutils:
+            data['ct3_crack'] = f"{args.hcutils}/ct3_to_ntlm.bin {ct3} {challenge}"
+        else:
+            data['ct3_crack'] = f"ct3_to_ntlm.bin {ct3} {challenge}"
+        data['hash1'] = f"{ct1}:{challenge}"
+        data['hash2'] = f"{ct2}:{challenge}"
+
+    if lmresp[20:48] == "0000000000000000000000000000":
+        if args.hcutils:
+            data['ct3_crack'] = f"{args.hcutils}/ct3_to_ntlm.bin {ct3} {clientchallenge} {lmresp}"
+        else:
+            data['ct3_crack'] = f"ct3_to_ntlm.bin {ct3} {clientchallenge} {lmresp}"
+        data['hash1'] = f"{ct1}:{srvchallenge}"
+        data['hash2'] = f"{ct2}:{srvchallenge}"
+
+    json_data = json.dumps(data)
+    if args.output:
+        with open(args.output, 'w') as json_file:
+            json.dump(data, json_file, indent=4)
+    else:
+        print(json_data)
+import hashlib
+import binascii
+import argparse
+import json
+import time
+import os
+
+def calc_md5_challenge(client_challenge, lm_resp):
+    combined_challenge = client_challenge + lm_resp[0:16]
+    m = hashlib.md5()
+    m.update(binascii.unhexlify(combined_challenge))
+    return m.hexdigest()
+
+parser = argparse.ArgumentParser()
+parser.add_argument('--ntlmv1', help='NTLMv1 Hash in responder format', required=True)
+parser.add_argument('--hashcat', help='hashcat path, eg: ~/git/hashcat', required=False)
+parser.add_argument('--hcutils', help='hashcat-utils path, eg: ~/git/hashcat-utils', required=False)
+parser.add_argument('--json', help='if this is set to anything it will output json, eg: --json 1', required=False)
+parser.add_argument('--output', help='output to a file, specify filename', required=False)
+args = parser.parse_args()
+
+# Splitting the NTLMv1 hash field
+hashsplit = args.ntlmv1.split(':')
+challenge = hashsplit[5]
+lmresp = hashsplit[3]
+ntresp = hashsplit[4]
+ct3 = ntresp[32:48]
+data = {
+    'ntlmv1': args.ntlmv1,
+    'user': hashsplit[0],
+    'domain': hashsplit[2],
+    'challenge': challenge,
+    'lmresp': lmresp,
+    'ntresp': ntresp,
+    'ct3': ct3
+}
+
+# Processing for different LM Response Conditions
+if lmresp[20:48] != "0000000000000000000000000000":
+    ct1 = ntresp[0:16]
+    ct2 = ntresp[16:32]
+    ct3 = ntresp[32:48]
+    output_data = {
+        'hostname': hashsplit[2],
+        'username': hashsplit[0],
+        'challenge': challenge,
+        'lm_response': lmresp,
+        'nt_response': ntresp,
+        'ct1': ct1,
+        'ct2': ct2,
+        'ct3': ct3
+    }
+
+    if args.json is None:
+        print("Hash Split Data: ", str(hashsplit))
+        print("Hostname: ", hashsplit[2])
+        print("Username: ", hashsplit[0])
+        print("Challenge: ", challenge)
+        print("LM Response: ", lmresp)
+        print("NT Response: ", ntresp)
+        print("CT1: ", ct1)
+        print("CT2: ", ct2)
+        print("CT3: ", ct3)
+        print("To Calculate Final NTLM Hash:")
+        if args.hcutils:
+            print(f"{args.hcutils}/ct3_to_ntlm.bin {ct3} {challenge}")
+        else:
+            print(f"./ct3_to_ntlm.bin {ct3} {challenge}")
+        print("To crack with hashcat, use this file:")
+        print(f"echo \"{ct1}:{challenge}\" >> 14000.hash")
+        print(f"echo \"{ct2}:{challenge}\" >> 14000.hash")
+        print(f"hashcat -m 14000 -a 3 -1 {args.hashcat}/charsets/DES_full.charset --hex-charset 14000.hash ?1?1?1?1?1?1?1?1")
+
+if lmresp[20:48] == "0000000000000000000000000000":
+    clientchallenge = hashsplit[5]
+    md5hash = calc_md5_challenge(clientchallenge, lmresp)
+    srvchallenge = md5hash[0:16]
+    data['srvchallenge'] = srvchallenge
+    ct1 = ntresp[0:16]
+    ct2 = ntresp[16:32]
+
+    if args.json is None:
+        print(f"Hash response is ESS, consider using responder with --lm or --disable-ess with a static challenge of 1122334455667788")
+        print(f"Client Challenge: {clientchallenge}")
+        print(f"Combined Challenge: {clientchallenge + lmresp[0:16]}")
+        print(f"MD5 Hash of Combined Challenge: {md5hash}")
+        print(f"Server Challenge: {srvchallenge}")
+        print("To calculate final NTLM hash use:")
+        if args.hcutils:
+            print(f"{args.hcutils}/ct3_to_ntlm.bin {ct3} {clientchallenge} {lmresp}")
+        else:
+            print(f"./ct3_to_ntlm.bin {ct3} {clientchallenge} {lmresp}")
+        print("To crack with hashcat, use this file:")
+        print(f"echo \"{ct1}:{srvchallenge}\" >> 14000.hash")
+        print(f"echo \"{ct2}:{srvchallenge}\" >> 14000.hash")
+        print(f"hashcat -m 14000 -a 3 -1 {args.hashcat}/charsets/DES_full.charset --hex-charset 14000.hash ?1?1?1?1?1?1?1?1")
+
+if args.json is not None:
+    if lmresp[20:48] != "0000000000000000000000000000":
+        if args.hcutils:
+            data['ct3_crack'] = f"{args.hcutils}/ct3_to_ntlm.bin {ct3} {challenge}"
+        else:
+            data['ct3_crack'] = f"ct3_to_ntlm.bin {ct3} {challenge}"
+        data['hash1'] = f"{ct1}:{challenge}"
+        data['hash2'] = f"{ct2}:{challenge}"
+
+    if lmresp[20:48] == "0000000000000000000000000000":
+        if args.hcutils:
+            data['ct3_crack'] = f"{args.hcutils}/ct3_to_ntlm.bin {ct3} {clientchallenge} {lmresp}"
+        else:
+            data['ct3_crack'] = f"ct3_to_ntlm.bin {ct3} {clientchallenge} {lmresp}"
+        data['hash1'] = f"{ct1}:{srvchallenge}"
+        data['hash2'] = f"{ct2}:{srvchallenge}"
+
+    json_data = json.dumps(data)
+    if args.output:
+        with open(args.output, 'w') as json_file:
+            json.dump(data, json_file, indent=4)
+    else:
+        print(json_data)
+import hashlib
+import binascii
+import argparse
+import json
+import time
+import os
+
+def calc_md5_challenge(client_challenge, lm_resp):
+    combined_challenge = client_challenge + lm_resp[0:16]
+    m = hashlib.md5()
+    m.update(binascii.unhexlify(combined_challenge))
+    return m.hexdigest()
+
+parser = argparse.ArgumentParser()
+parser.add_argument('--ntlmv1', help='NTLMv1 Hash in responder format', required=True)
+parser.add_argument('--hashcat', help='hashcat path, eg: ~/git/hashcat', required=False)
+parser.add_argument('--hcutils', help='hashcat-utils path, eg: ~/git/hashcat-utils', required=False)
+parser.add_argument('--json', help='if this is set to anything it will output json, eg: --json 1', required=False)
+parser.add_argument('--output', help='output to a file, specify filename', required=False)
+args = parser.parse_args()
+
+# Splitting the NTLMv1 hash field
+hashsplit = args.ntlmv1.split(':')
+challenge = hashsplit[5]
+lmresp = hashsplit[3]
+ntresp = hashsplit[4]
+ct3 = ntresp[32:48]
+data = {
+    'ntlmv1': args.ntlmv1,
+    'user': hashsplit[0],
+    'domain': hashsplit[2],
+    'challenge': challenge,
+    'lmresp': lmresp,
+    'ntresp': ntresp,
+    'ct3': ct3
+}
+
+# Processing for different LM Response Conditions
+if lmresp[20:48] != "0000000000000000000000000000":
+    ct1 = ntresp[0:16]
+    ct2 = ntresp[16:32]
+    ct3 = ntresp[32:48]
+    output_data = {
+        'hostname': hashsplit[2],
+        'username': hashsplit[0],
+        'challenge': challenge,
+        'lm_response': lmresp,
+        'nt_response': ntresp,
+        'ct1': ct1,
+        'ct2': ct2,
+        'ct3': ct3
+    }
+
+    if args.json is None:
+        print("Hash Split Data: ", str(hashsplit))
+        print("Hostname: ", hashsplit[2])
+        print("Username: ", hashsplit[0])
+        print("Challenge: ", challenge)
+        print("LM Response: ", lmresp)
+        print("NT Response: ", ntresp)
+        print("CT1: ", ct1)
+        print("CT2: ", ct2)
+        print("CT3: ", ct3)
+        print("To Calculate Final NTLM Hash:")
+        if args.hcutils:
+            print(f"{args.hcutils}/ct3_to_ntlm.bin {ct3} {challenge}")
+        else:
+            print(f"./ct3_to_ntlm.bin {ct3} {challenge}")
+        print("To crack with hashcat, use this file:")
+        print(f"echo \"{ct1}:{challenge}\" >> 14000.hash")
+        print(f"echo \"{ct2}:{challenge}\" >> 14000.hash")
+        print(f"hashcat -m 14000 -a 3 -1 {args.hashcat}/charsets/DES_full.charset --hex-charset 14000.hash ?1?1?1?1?1?1?1?1")
+
+if lmresp[20:48] == "0000000000000000000000000000":
+    clientchallenge = hashsplit[5]
+    md5hash = calc_md5_challenge(clientchallenge, lmresp)
+    srvchallenge = md5hash[0:16]
+    data['srvchallenge'] = srvchallenge
+    ct1 = ntresp[0:16]
+    ct2 = ntresp[16:32]
+
+    if args.json is None:
+        print(f"Hash response is ESS, consider using responder with --lm or --disable-ess with a static challenge of 1122334455667788")
+        print(f"Client Challenge: {clientchallenge}")
+        print(f"Combined Challenge: {clientchallenge + lmresp[0:16]}")
+        print(f"MD5 Hash of Combined Challenge: {md5hash}")
+        print(f"Server Challenge: {srvchallenge}")
+        print("To calculate final NTLM hash use:")
+        if args.hcutils:
+            print(f"{args.hcutils}/ct3_to_ntlm.bin {ct3} {clientchallenge} {lmresp}")
+        else:
+            print(f"./ct3_to_ntlm.bin {ct3} {clientchallenge} {lmresp}")
+        print("To crack with hashcat, use this file:")
+        print(f"echo \"{ct1}:{srvchallenge}\" >> 14000.hash")
+        print(f"echo \"{ct2}:{srvchallenge}\" >> 14000.hash")
+        print(f"hashcat -m 14000 -a 3 -1 {args.hashcat}/charsets/DES_full.charset --hex-charset 14000.hash ?1?1?1?1?1?1?1?1")
+
+if args.json is not None:
+    if lmresp[20:48] != "0000000000000000000000000000":
+        if args.hcutils:
+            data['ct3_crack'] = f"{args.hcutils}/ct3_to_ntlm.bin {ct3} {challenge}"
+        else:
+            data['ct3_crack'] = f"ct3_to_ntlm.bin {ct3} {challenge}"
+        data['hash1'] = f"{ct1}:{challenge}"
+        data['hash2'] = f"{ct2}:{challenge}"
+
+    if lmresp[20:48] == "0000000000000000000000000000":
+        if args.hcutils:
+            data['ct3_crack'] = f"{args.hcutils}/ct3_to_ntlm.bin {ct3} {clientchallenge} {lmresp}"
+        else:
+            data['ct3_crack'] = f"ct3_to_ntlm.bin {ct3} {clientchallenge} {lmresp}"
+        data['hash1'] = f"{ct1}:{srvchallenge}"
+        data['hash2'] = f"{ct2}:{srvchallenge}"
+
+    json_data = json.dumps(data)
+    if args.output:
+        with open(args.output, 'w') as json_file:
+            json.dump(data, json_file, indent=4)
+    else:
+        print(json_data)
+import hashlib
+import binascii
+import argparse
+import json
+import time
+import os
+
+def calc_md5_challenge(client_challenge, lm_resp):
+    combined_challenge = client_challenge + lm_resp[0:16]
+    m = hashlib.md5()
+    m.update(binascii.unhexlify(combined_challenge))
+    return m.hexdigest()
+
+parser = argparse.ArgumentParser()
+parser.add_argument('--ntlmv1', help='NTLMv1 Hash in responder format', required=True)
+parser.add_argument('--hashcat', help='hashcat path, eg: ~/git/hashcat', required=False)
+parser.add_argument('--hcutils', help='hashcat-utils path, eg: ~/git/hashcat-utils', required=False)
+parser.add_argument('--json', help='if this is set to anything it will output json, eg: --json 1', required=False)
+parser.add_argument('--output', help='output to a file, specify filename', required=False)
+args = parser.parse_args()
+
+# Splitting the NTLMv1 hash field
+hashsplit = args.ntlmv1.split(':')
+challenge = hashsplit[5]
+lmresp = hashsplit[3]
+ntresp = hashsplit[4]
+ct3 = ntresp[32:48]
+data = {
+    'ntlmv1': args.ntlmv1,
+    'user': hashsplit[0],
+    'domain': hashsplit[2],
+    'challenge': challenge,
+    'lmresp': lmresp,
+    'ntresp': ntresp,
+    'ct3': ct3
+}
+
+# Processing for different LM Response Conditions
+if lmresp[20:48] != "0000000000000000000000000000":
+    ct1 = ntresp[0:16]
+    ct2 = ntresp[16:32]
+    ct3 = ntresp[32:48]
+    output_data = {
+        'hostname': hashsplit[2],
+        'username': hashsplit[0],
+        'challenge': challenge,
+        'lm_response': lmresp,
+        'nt_response': ntresp,
+        'ct1': ct1,
+        'ct2': ct2,
+        'ct3': ct3
+    }
+
+    if args.json is None:
+        print("Hash Split Data: ", str(hashsplit))
+        print("Hostname: ", hashsplit[2])
+        print("Username: ", hashsplit[0])
+        print("Challenge: ", challenge)
+        print("LM Response: ", lmresp)
+        print("NT Response: ", ntresp)
+        print("CT1: ", ct1)
+        print("CT2: ", ct2)
+        print("CT3: ", ct3)
+        print("To Calculate Final NTLM Hash:")
+        if args.hcutils:
+            print(f"{args.hcutils}/ct3_to_ntlm.bin {ct3} {challenge}")
+        else:
+            print(f"./ct3_to_ntlm.bin {ct3} {challenge}")
+        print("To crack with hashcat, use this file:")
+        print(f"echo \"{ct1}:{challenge}\" >> 14000.hash")
+        print(f"echo \"{ct2}:{challenge}\" >> 14000.hash")
+        print(f"hashcat -m 14000 -a 3 -1 {args.hashcat}/charsets/DES_full.charset --hex-charset 14000.hash ?1?1?1?1?1?1?1?1")
+
+if lmresp[20:48] == "0000000000000000000000000000":
+    clientchallenge = hashsplit[5]
+    md5hash = calc_md5_challenge(clientchallenge, lmresp)
+    srvchallenge = md5hash[0:16]
+    data['srvchallenge'] = srvchallenge
+    ct1 = ntresp[0:16]
+    ct2 = ntresp[16:32]
+
+    if args.json is None:
+        print(f"Hash response is ESS, consider using responder with --lm or --disable-ess with a static challenge of 1122334455667788")
+        print(f"Client Challenge: {clientchallenge}")
+        print(f"Combined Challenge: {clientchallenge + lmresp[0:16]}")
+        print(f"MD5 Hash of Combined Challenge: {md5hash}")
+        print(f"Server Challenge: {srvchallenge}")
+        print("To calculate final NTLM hash use:")
+        if args.hcutils:
+            print(f"{args.hcutils}/ct3_to_ntlm.bin {ct3} {clientchallenge} {lmresp}")
+        else:
+            print(f"./ct3_to_ntlm.bin {ct3} {clientchallenge} {lmresp}")
+        print("To crack with hashcat, use this file:")
+        print(f"echo \"{ct1}:{srvchallenge}\" >> 14000.hash")
+        print(f"echo \"{ct2}:{srvchallenge}\" >> 14000.hash")
+        print(f"hashcat -m 14000 -a 3 -1 {args.hashcat}/charsets/DES_full.charset --hex-charset 14000.hash ?1?1?1?1?1?1?1?1")
+
+if args.json is not None:
+    if lmresp[20:48] != "0000000000000000000000000000":
+        if args.hcutils:
+            data['ct3_crack'] = f"{args.hcutils}/ct3_to_ntlm.bin {ct3} {challenge}"
+        else:
+            data['ct3_crack'] = f"ct3_to_ntlm.bin {ct3} {challenge}"
+        data['hash1'] = f"{ct1}:{challenge}"
+        data['hash2'] = f"{ct2}:{challenge}"
+
+    if lmresp[20:48] == "0000000000000000000000000000":
+        if args.hcutils:
+            data['ct3_crack'] = f"{args.hcutils}/ct3_to_ntlm.bin {ct3} {clientchallenge} {lmresp}"
+        else:
+            data['ct3_crack'] = f"ct3_to_ntlm.bin {ct3} {clientchallenge} {lmresp}"
+        data['hash1'] = f"{ct1}:{srvchallenge}"
+        data['hash2'] = f"{ct2}:{srvchallenge}"
+
+    json_data = json.dumps(data)
+    if args.output:
+        with open(args.output, 'w') as json_file:
+            json.dump(data, json_file, indent=4)
+    else:
+        print(json_data)
+import hashlib
+import binascii
+import argparse
+import json
+import time
+import os
+
+def calc_md5_challenge(client_challenge, lm_resp):
+    combined_challenge = client_challenge + lm_resp[0:16]
+    m = hashlib.md5()
+    m.update(binascii.unhexlify(combined_challenge))
+    return m.hexdigest()
+
+parser = argparse.ArgumentParser()
+parser.add_argument('--ntlmv1', help='NTLMv1 Hash in responder format', required=True)
+parser.add_argument('--hashcat', help='hashcat path, eg: ~/git/hashcat', required=False)
+parser.add_argument('--hcutils', help='hashcat-utils path, eg: ~/git/hashcat-utils', required=False)
+parser.add_argument('--json', help='if this is set to anything it will output json, eg: --json 1', required=False)
+parser.add_argument('--output', help='output to a file, specify filename', required=False)
+args = parser.parse_args()
+
+# Splitting the NTLMv1 hash field
+hashsplit = args.ntlmv1.split(':')
+challenge = hashsplit[5]
+lmresp = hashsplit[3]
+ntresp = hashsplit[4]
+ct3 = ntresp[32:48]
+data = {
+    'ntlmv1': args.ntlmv1,
+    'user': hashsplit[0],
+    'domain': hashsplit[2],
+    'challenge': challenge,
+    'lmresp': lmresp,
+    'ntresp': ntresp,
+    'ct3': ct3
+}
+
+# Processing for different LM Response Conditions
+if lmresp[20:48] != "0000000000000000000000000000":
+    ct1 = ntresp[0:16]
+    ct2 = ntresp[16:32]
+    ct3 = ntresp[32:48]
+    output_data = {
+        'hostname': hashsplit[2],
+        'username': hashsplit[0],
+        'challenge': challenge,
+        'lm_response': lmresp,
+        'nt_response': ntresp,
+        'ct1': ct1,
+        'ct2': ct2,
+        'ct3': ct3
+    }
+
+    if args.json is None:
+        print("Hash Split Data: ", str(hashsplit))
+        print("Hostname: ", hashsplit[2])
+        print("Username: ", hashsplit[0])
+        print("Challenge: ", challenge)
+        print("LM Response: ", lmresp)
+        print("NT Response: ", ntresp)
+        print("CT1: ", ct1)
+        print("CT2: ", ct2)
+        print("CT3: ", ct3)
+        print("To Calculate Final NTLM Hash:")
+        if args.hcutils:
+            print(f"{args.hcutils}/ct3_to_ntlm.bin {ct3} {challenge}")
+        else:
+            print(f"./ct3_to_ntlm.bin {ct3} {challenge}")
+        print("To crack with hashcat, use this file:")
+        print(f"echo \"{ct1}:{challenge}\" >> 14000.hash")
+        print(f"echo \"{ct2}:{challenge}\" >> 14000.hash")
+        print(f"hashcat -m 14000 -a 3 -1 {args.hashcat}/charsets/DES_full.charset --hex-charset 14000.hash ?1?1?1?1?1?1?1?1")
+
+if lmresp[20:48] == "0000000000000000000000000000":
+    clientchallenge = hashsplit[5]
+    md5hash = calc_md5_challenge(clientchallenge, lmresp)
+    srvchallenge = md5hash[0:16]
+    data['srvchallenge'] = srvchallenge
+    ct1 = ntresp[0:16]
+    ct2 = ntresp[16:32]
+
+    if args.json is None:
+        print(f"Hash response is ESS, consider using responder with --lm or --disable-ess with a static challenge of 1122334455667788")
+        print(f"Client Challenge: {clientchallenge}")
+        print(f"Combined Challenge: {clientchallenge + lmresp[0:16]}")
+        print(f"MD5 Hash of Combined Challenge: {md5hash}")
+        print(f"Server Challenge: {srvchallenge}")
+        print("To calculate final NTLM hash use:")
+        if args.hcutils:
+            print(f"{args.hcutils}/ct3_to_ntlm.bin {ct3} {clientchallenge} {lmresp}")
+        else:
+            print(f"./ct3_to_ntlm.bin {ct3} {clientchallenge} {lmresp}")
+        print("To crack with hashcat, use this file:")
+        print(f"echo \"{ct1}:{srvchallenge}\" >> 14000.hash")
+        print(f"echo \"{ct2}:{srvchallenge}\" >> 14000.hash")
+        print(f"hashcat -m 14000 -a 3 -1 {args.hashcat}/charsets/DES_full.charset --hex-charset 14000.hash ?1?1?1?1?1?1?1?1")
+
+if args.json is not None:
+    if lmresp[20:48] != "0000000000000000000000000000":
+        if args.hcutils:
+            data['ct3_crack'] = f"{args.hcutils}/ct3_to_ntlm.bin {ct3} {challenge}"
+        else:
+            data['ct3_crack'] = f"ct3_to_ntlm.bin {ct3} {challenge}"
+        data['hash1'] = f"{ct1}:{challenge}"
+        data['hash2'] = f"{ct2}:{challenge}"
+
+    if lmresp[20:48] == "0000000000000000000000000000":
+        if args.hcutils:
+            data['ct3_crack'] = f"{args.hcutils}/ct3_to_ntlm.bin {ct3} {clientchallenge} {lmresp}"
+        else:
+            data['ct3_crack'] = f"ct3_to_ntlm.bin {ct3} {clientchallenge} {lmresp}"
+        data['hash1'] = f"{ct1}:{srvchallenge}"
+        data['hash2'] = f"{ct2}:{srvchallenge}"
+
+    json_data = json.dumps(data)
+    if args.output:
+        with open(args.output, 'w') as json_file:
+            json.dump(data, json_file, indent=4)
+    else:
+        print(json_data)
+import hashlib
+import binascii
+import argparse
+import json
+import time
+import os
+
+def calc_md5_challenge(client_challenge, lm_resp):
+    combined_challenge = client_challenge + lm_resp[0:16]
+    m = hashlib.md5()
+    m.update(binascii.unhexlify(combined_challenge))
+    return m.hexdigest()
+
+parser = argparse.ArgumentParser()
+parser.add_argument('--ntlmv1', help='NTLMv1 Hash in responder format', required=True)
+parser.add_argument('--hashcat', help='hashcat path, eg: ~/git/hashcat', required=False)
+parser.add_argument('--hcutils', help='hashcat-utils path, eg: ~/git/hashcat-utils', required=False)
+parser.add_argument('--json', help='if this is set to anything it will output json, eg: --json 1', required=False)
+parser.add_argument('--output', help='output to a file, specify filename', required=False)
+args = parser.parse_args()
+
+# Splitting the NTLMv1 hash field
+hashsplit = args.ntlmv1.split(':')
+challenge = hashsplit[5]
+lmresp = hashsplit[3]
+ntresp = hashsplit[4]
+ct3 = ntresp[32:48]
+data = {
+    'ntlmv1': args.ntlmv1,
+    'user': hashsplit[0],
+    'domain': hashsplit[2],
+    'challenge': challenge,
+    'lmresp': lmresp,
+    'ntresp': ntresp,
+    'ct3': ct3
+}
+
+# Processing for different LM Response Conditions
+if lmresp[20:48] != "0000000000000000000000000000":
+    ct1 = ntresp[0:16]
+    ct2 = ntresp[16:32]
+    ct3 = ntresp[32:48]
+    output_data = {
+        'hostname': hashsplit[2],
+        'username': hashsplit[0],
+        'challenge': challenge,
+        'lm_response': lmresp,
+        'nt_response': ntresp,
+        'ct1': ct1,
+        'ct2': ct2,
+        'ct3': ct3
+    }
+
+    if args.json is None:
+        print("Hash Split Data: ", str(hashsplit))
+        print("Hostname: ", hashsplit[2])
+        print("Username: ", hashsplit[0])
+        print("Challenge: ", challenge)
+        print("LM Response: ", lmresp)
+        print("NT Response: ", ntresp)
+        print("CT1: ", ct1)
+        print("CT2: ", ct2)
+        print("CT3: ", ct3)
+        print("To Calculate Final NTLM Hash:")
+        if args.hcutils:
+            print(f"{args.hcutils}/ct3_to_ntlm.bin {ct3} {challenge}")
+        else:
+            print(f"./ct3_to_ntlm.bin {ct3} {challenge}")
+        print("To crack with hashcat, use this file:")
+        print(f"echo \"{ct1}:{challenge}\" >> 14000.hash")
+        print(f"echo \"{ct2}:{challenge}\" >> 14000.hash")
+        print(f"hashcat -m 14000 -a 3 -1 {args.hashcat}/charsets/DES_full.charset --hex-charset 14000.hash ?1?1?1?1?1?1?1?1")
+
+if lmresp[20:48] == "0000000000000000000000000000":
+    clientchallenge = hashsplit[5]
+    md5hash = calc_md5_challenge(clientchallenge, lmresp)
+    srvchallenge = md5hash[0:16]
+    data['srvchallenge'] = srvchallenge
+    ct1 = ntresp[0:16]
+    ct2 = ntresp[16:32]
+
+    if args.json is None:
+        print(f"Hash response is ESS, consider using responder with --lm or --disable-ess with a static challenge of 1122334455667788")
+        print(f"Client Challenge: {clientchallenge}")
+        print(f"Combined Challenge: {clientchallenge + lmresp[0:16]}")
+        print(f"MD5 Hash of Combined Challenge: {md5hash}")
+        print(f"Server Challenge: {srvchallenge}")
+        print("To calculate final NTLM hash use:")
+        if args.hcutils:
+            print(f"{args.hcutils}/ct3_to_ntlm.bin {ct3} {clientchallenge} {lmresp}")
+        else:
+            print(f"./ct3_to_ntlm.bin {ct3} {clientchallenge} {lmresp}")
+        print("To crack with hashcat, use this file:")
+        print(f"echo \"{ct1}:{srvchallenge}\" >> 14000.hash")
+        print(f"echo \"{ct2}:{srvchallenge}\" >> 14000.hash")
+        print(f"hashcat -m 14000 -a 3 -1 {args.hashcat}/charsets/DES_full.charset --hex-charset 14000.hash ?1?1?1?1?1?1?1?1")
+
+if args.json is not None:
+    if lmresp[20:48] != "0000000000000000000000000000":
+        if args.hcutils:
+            data['ct3_crack'] = f"{args.hcutils}/ct3_to_ntlm.bin {ct3} {challenge}"
+        else:
+            data['ct3_crack'] = f"ct3_to_ntlm.bin {ct3} {challenge}"
+        data['hash1'] = f"{ct1}:{challenge}"
+        data['hash2'] = f"{ct2}:{challenge}"
+
+    if lmresp[20:48] == "0000000000000000000000000000":
+        if args.hcutils:
+            data['ct3_crack'] = f"{args.hcutils}/ct3_to_ntlm.bin {ct3} {clientchallenge} {lmresp}"
+        else:
+            data['ct3_crack'] = f"ct3_to_ntlm.bin {ct3} {clientchallenge} {lmresp}"
+        data['hash1'] = f"{ct1}:{srvchallenge}"
+        data['hash2'] = f"{ct2}:{srvchallenge}"
+
+    json_data = json.dumps(data)
+    if args.output:
+        with open(args.output, 'w') as json_file:
+            json.dump(data, json_file, indent=4)
+    else:
+        print(json_data)
+import hashlib
+import binascii
+import argparse
+import json
+import time
+import os
+
+def calc_md5_challenge(client_challenge, lm_resp):
+    combined_challenge = client_challenge + lm_resp[0:16]
+    m = hashlib.md5()
+    m.update(binascii.unhexlify(combined_challenge))
+    return m.hexdigest()
+
+parser = argparse.ArgumentParser()
+parser.add_argument('--ntlmv1', help='NTLMv1 Hash in responder format', required=True)
+parser.add_argument('--hashcat', help='hashcat path, eg: ~/git/hashcat', required=False)
+parser.add_argument('--hcutils', help='hashcat-utils path, eg: ~/git/hashcat-utils', required=False)
+parser.add_argument('--json', help='if this is set to anything it will output json, eg: --json 1', required=False)
+parser.add_argument('--output', help='output to a file, specify filename', required=False)
+args = parser.parse_args()
+
+# Splitting the NTLMv1 hash field
+hashsplit = args.ntlmv1.split(':')
+challenge = hashsplit[5]
+lmresp = hashsplit[3]
+ntresp = hashsplit[4]
+ct3 = ntresp[32:48]
+data = {
+    'ntlmv1': args.ntlmv1,
+    'user': hashsplit[0],
+    'domain': hashsplit[2],
+    'challenge': challenge,
+    'lmresp': lmresp,
+    'ntresp': ntresp,
+    'ct3': ct3
+}
+
+# Processing for different LM Response Conditions
+if lmresp[20:48] != "0000000000000000000000000000":
+    ct1 = ntresp[0:16]
+    ct2 = ntresp[16:32]
+    ct3 = ntresp[32:48]
+    output_data = {
+        'hostname': hashsplit[2],
+        'username': hashsplit[0],
+        'challenge': challenge,
+        'lm_response': lmresp,
+        'nt_response': ntresp,
+        'ct1': ct1,
+        'ct2': ct2,
+        'ct3': ct3
+    }
+
+    if args.json is None:
+        print("Hash Split Data: ", str(hashsplit))
+        print("Hostname: ", hashsplit[2])
+        print("Username: ", hashsplit[0])
+        print("Challenge: ", challenge)
+        print("LM Response: ", lmresp)
+        print("NT Response: ", ntresp)
+        print("CT1: ", ct1)
+        print("CT2: ", ct2)
+        print("CT3: ", ct3)
+        print("To Calculate Final NTLM Hash:")
+        if args.hcutils:
+            print(f"{args.hcutils}/ct3_to_ntlm.bin {ct3} {challenge}")
+        else:
+            print(f"./ct3_to_ntlm.bin {ct3} {challenge}")
+        print("To crack with hashcat, use this file:")
+        print(f"echo \"{ct1}:{challenge}\" >> 14000.hash")
+        print(f"echo \"{ct2}:{challenge}\" >> 14000.hash")
+        print(f"hashcat -m 14000 -a 3 -1 {args.hashcat}/charsets/DES_full.charset --hex-charset 14000.hash ?1?1?1?1?1?1?1?1")
+
+if lmresp[20:48] == "0000000000000000000000000000":
+    clientchallenge = hashsplit[5]
+    md5hash = calc_md5_challenge(clientchallenge, lmresp)
+    srvchallenge = md5hash[0:16]
+    data['srvchallenge'] = srvchallenge
+    ct1 = ntresp[0:16]
+    ct2 = ntresp[16:32]
+
+    if args.json is None:
+        print(f"Hash response is ESS, consider using responder with --lm or --disable-ess with a static challenge of 1122334455667788")
+        print(f"Client Challenge: {clientchallenge}")
+        print(f"Combined Challenge: {clientchallenge + lmresp[0:16]}")
+        print(f"MD5 Hash of Combined Challenge: {md5hash}")
+        print(f"Server Challenge: {srvchallenge}")
+        print("To calculate final NTLM hash use:")
+        if args.hcutils:
+            print(f"{args.hcutils}/ct3_to_ntlm.bin {ct3} {clientchallenge} {lmresp}")
+        else:
+            print(f"./ct3_to_ntlm.bin {ct3} {clientchallenge} {lmresp}")
+        print("To crack with hashcat, use this file:")
+        print(f"echo \"{ct1}:{srvchallenge}\" >> 14000.hash")
+        print(f"echo \"{ct2}:{srvchallenge}\" >> 14000.hash")
+        print(f"hashcat -m 14000 -a 3 -1 {args.hashcat}/charsets/DES_full.charset --hex-charset 14000.hash ?1?1?1?1?1?1?1?1")
+
+if args.json is not None:
+    if lmresp[20:48] != "0000000000000000000000000000":
+        if args.hcutils:
+            data['ct3_crack'] = f"{args.hcutils}/ct3_to_ntlm.bin {ct3} {challenge}"
+        else:
+            data['ct3_crack'] = f"ct3_to_ntlm.bin {ct3} {challenge}"
+        data['hash1'] = f"{ct1}:{challenge}"
+        data['hash2'] = f"{ct2}:{challenge}"
+
+    if lmresp[20:48] == "0000000000000000000000000000":
+        if args.hcutils:
+            data['ct3_crack'] = f"{args.hcutils}/ct3_to_ntlm.bin {ct3} {clientchallenge} {lmresp}"
+        else:
+            data['ct3_crack'] = f"ct3_to_ntlm.bin {ct3} {clientchallenge} {lmresp}"
+        data['hash1'] = f"{ct1}:{srvchallenge}"
+        data['hash2'] = f"{ct2}:{srvchallenge}"
+
+    json_data = json.dumps(data)
+    if args.output:
+        with open(args.output, 'w') as json_file:
+            json.dump(data, json_file, indent=4)
+    else:
+        print(json_data)
+import hashlib
+import binascii
+import argparse
+import json
+import time
+import os
+
+def calc_md5_challenge(client_challenge, lm_resp):
+    combined_challenge = client_challenge + lm_resp[0:16]
+    m = hashlib.md5()
+    m.update(binascii.unhexlify(combined_challenge))
+    return m.hexdigest()
+
+parser = argparse.ArgumentParser()
+parser.add_argument('--ntlmv1', help='NTLMv1 Hash in responder format', required=True)
+parser.add_argument('--hashcat', help='hashcat path, eg: ~/git/hashcat', required=False)
+parser.add_argument('--hcutils', help='hashcat-utils path, eg: ~/git/hashcat-utils', required=False)
+parser.add_argument('--json', help='if this is set to anything it will output json, eg: --json 1', required=False)
+parser.add_argument('--output', help='output to a file, specify filename', required=False)
+args = parser.parse_args()
+
+# Splitting the NTLMv1 hash field
+hashsplit = args.ntlmv1.split(':')
+challenge = hashsplit[5]
+lmresp = hashsplit[3]
+ntresp = hashsplit[4]
+ct3 = ntresp[32:48]
+data = {
+    'ntlmv1': args.ntlmv1,
+    'user': hashsplit[0],
+    'domain': hashsplit[2],
+    'challenge': challenge,
+    'lmresp': lmresp,
+    'ntresp': ntresp,
+    'ct3': ct3
+}
+
+# Processing for different LM Response Conditions
+if lmresp[20:48] != "0000000000000000000000000000":
+    ct1 = ntresp[0:16]
+    ct2 = ntresp[16:32]
+    ct3 = ntresp[32:48]
+    output_data = {
+        'hostname': hashsplit[2],
+        'username': hashsplit[0],
+        'challenge': challenge,
+        'lm_response': lmresp,
+        'nt_response': ntresp,
+        'ct1': ct1,
+        'ct2': ct2,
+        'ct3': ct3
+    }
+
+    if args.json is None:
+        print("Hash Split Data: ", str(hashsplit))
+        print("Hostname: ", hashsplit[2])
+        print("Username: ", hashsplit[0])
+        print("Challenge: ", challenge)
+        print("LM Response: ", lmresp)
+        print("NT Response: ", ntresp)
+        print("CT1: ", ct1)
+        print("CT2: ", ct2)
+        print("CT3: ", ct3)
+        print("To Calculate Final NTLM Hash:")
+        if args.hcutils:
+            print(f"{args.hcutils}/ct3_to_ntlm.bin {ct3} {challenge}")
+        else:
+            print(f"./ct3_to_ntlm.bin {ct3} {challenge}")
+        print("To crack with hashcat, use this file:")
+        print(f"echo \"{ct1}:{challenge}\" >> 14000.hash")
+        print(f"echo \"{ct2}:{challenge}\" >> 14000.hash")
+        print(f"hashcat -m 14000 -a 3 -1 {args.hashcat}/charsets/DES_full.charset --hex-charset 14000.hash ?1?1?1?1?1?1?1?1")
+
+if lmresp[20:48] == "0000000000000000000000000000":
+    clientchallenge = hashsplit[5]
+    md5hash = calc_md5_challenge(clientchallenge, lmresp)
+    srvchallenge = md5hash[0:16]
+    data['srvchallenge'] = srvchallenge
+    ct1 = ntresp[0:16]
+    ct2 = ntresp[16:32]
+
+    if args.json is None:
+        print(f"Hash response is ESS, consider using responder with --lm or --disable-ess with a static challenge of 1122334455667788")
+        print(f"Client Challenge: {clientchallenge}")
+        print(f"Combined Challenge: {clientchallenge + lmresp[0:16]}")
+        print(f"MD5 Hash of Combined Challenge: {md5hash}")
+        print(f"Server Challenge: {srvchallenge}")
+        print("To calculate final NTLM hash use:")
+        if args.hcutils:
+            print(f"{args.hcutils}/ct3_to_ntlm.bin {ct3} {clientchallenge} {lmresp}")
+        else:
+            print(f"./ct3_to_ntlm.bin {ct3} {clientchallenge} {lmresp}")
+        print("To crack with hashcat, use this file:")
+        print(f"echo \"{ct1}:{srvchallenge}\" >> 14000.hash")
+        print(f"echo \"{ct2}:{srvchallenge}\" >> 14000.hash")
+        print(f"hashcat -m 14000 -a 3 -1 {args.hashcat}/charsets/DES_full.charset --hex-charset 14000.hash ?1?1?1?1?1?1?1?1")
+
+if args.json is not None:
+    if lmresp[20:48] != "0000000000000000000000000000":
+        if args.hcutils:
+            data['ct3_crack'] = f"{args.hcutils}/ct3_to_ntlm.bin {ct3} {challenge}"
+        else:
+            data['ct3_crack'] = f"ct3_to_ntlm.bin {ct3} {challenge}"
+        data['hash1'] = f"{ct1}:{challenge}"
+        data['hash2'] = f"{ct2}:{challenge}"
+
+    if lmresp[20:48] == "0000000000000000000000000000":
+        if args.hcutils:
+            data['ct3_crack'] = f"{args.hcutils}/ct3_to_ntlm.bin {ct3} {clientchallenge} {lmresp}"
+        else:
+            data['ct3_crack'] = f"ct3_to_ntlm.bin {ct3} {clientchallenge} {lmresp}"
+        data['hash1'] = f"{ct1}:{srvchallenge}"
+        data['hash2'] = f"{ct2}:{srvchallenge}"
+
+    json_data = json.dumps(data)
+    if args.output:
+        with open(args.output, 'w') as json_file:
+            json.dump(data, json_file, indent=4)
+    else:
+        print(json_data)
+import hashlib
+import binascii
+import argparse
+import json
+import time
+import os
+
+def calc_md5_challenge(client_challenge, lm_resp):
+    combined_challenge = client_challenge + lm_resp[0:16]
+    m = hashlib.md5()
+    m.update(binascii.unhexlify(combined_challenge))
+    return m.hexdigest()
+
+parser = argparse.ArgumentParser()
+parser.add_argument('--ntlmv1', help='NTLMv1 Hash in responder format', required=True)
+parser.add_argument('--hashcat', help='hashcat path, eg: ~/git/hashcat', required=False)
+parser.add_argument('--hcutils', help='hashcat-utils path, eg: ~/git/hashcat-utils', required=False)
+parser.add_argument('--json', help='if this is set to anything it will output json, eg: --json 1', required=False)
+parser.add_argument('--output', help='output to a file, specify filename', required=False)
+args = parser.parse_args()
+
+# Splitting the NTLMv1 hash field
+hashsplit = args.ntlmv1.split(':')
+challenge = hashsplit[5]
+lmresp = hashsplit[3]
+ntresp = hashsplit[4]
+ct3 = ntresp[32:48]
+data = {
+    'ntlmv1': args.ntlmv1,
+    'user': hashsplit[0],
+    'domain': hashsplit[2],
+    'challenge': challenge,
+    'lmresp': lmresp,
+    'ntresp': ntresp,
+    'ct3': ct3
+}
+
+# Processing for different LM Response Conditions
+if lmresp[20:48] != "0000000000000000000000000000":
+    ct1 = ntresp[0:16]
+    ct2 = ntresp[16:32]
+    ct3 = ntresp[32:48]
+    output_data = {
+        'hostname': hashsplit[2],
+        'username': hashsplit[0],
+        'challenge': challenge,
+        'lm_response': lmresp,
+        'nt_response': ntresp,
+        'ct1': ct1,
+        'ct2': ct2,
+        'ct3': ct3
+    }
+
+    if args.json is None:
+        print("Hash Split Data: ", str(hashsplit))
+        print("Hostname: ", hashsplit[2])
+        print("Username: ", hashsplit[0])
+        print("Challenge: ", challenge)
+        print("LM Response: ", lmresp)
+        print("NT Response: ", ntresp)
+        print("CT1: ", ct1)
+        print("CT2: ", ct2)
+        print("CT3: ", ct3)
+        print("To Calculate Final NTLM Hash:")
+        if args.hcutils:
+            print(f"{args.hcutils}/ct3_to_ntlm.bin {ct3} {challenge}")
+        else:
+            print(f"./ct3_to_ntlm.bin {ct3} {challenge}")
+        print("To crack with hashcat, use this file:")
+        print(f"echo \"{ct1}:{challenge}\" >> 14000.hash")
+        print(f"echo \"{ct2}:{challenge}\" >> 14000.hash")
+        print(f"hashcat -m 14000 -a 3 -1 {args.hashcat}/charsets/DES_full.charset --hex-charset 14000.hash ?1?1?1?1?1?1?1?1")
+
+if lmresp[20:48] == "0000000000000000000000000000":
+    clientchallenge = hashsplit[5]
+    md5hash = calc_md5_challenge(clientchallenge, lmresp)
+    srvchallenge = md5hash[0:16]
+    data['srvchallenge'] = srvchallenge
+    ct1 = ntresp[0:16]
+    ct2 = ntresp[16:32]
+
+    if args.json is None:
+        print(f"Hash response is ESS, consider using responder with --lm or --disable-ess with a static challenge of 1122334455667788")
+        print(f"Client Challenge: {clientchallenge}")
+        print(f"Combined Challenge: {clientchallenge + lmresp[0:16]}")
+        print(f"MD5 Hash of Combined Challenge: {md5hash}")
+        print(f"Server Challenge: {srvchallenge}")
+        print("To calculate final NTLM hash use:")
+        if args.hcutils:
+            print(f"{args.hcutils}/ct3_to_ntlm.bin {ct3} {clientchallenge} {lmresp}")
+        else:
+            print(f"./ct3_to_ntlm.bin {ct3} {clientchallenge} {lmresp}")
+        print("To crack with hashcat, use this file:")
+        print(f"echo \"{ct1}:{srvchallenge}\" >> 14000.hash")
+        print(f"echo \"{ct2}:{srvchallenge}\" >> 14000.hash")
+        print(f"hashcat -m 14000 -a 3 -1 {args.hashcat}/charsets/DES_full.charset --hex-charset 14000.hash ?1?1?1?1?1?1?1?1")
+
+if args.json is not None:
+    if lmresp[20:48] != "0000000000000000000000000000":
+        if args.hcutils:
+            data['ct3_crack'] = f"{args.hcutils}/ct3_to_ntlm.bin {ct3} {challenge}"
+        else:
+            data['ct3_crack'] = f"ct3_to_ntlm.bin {ct3} {challenge}"
+        data['hash1'] = f"{ct1}:{challenge}"
+        data['hash2'] = f"{ct2}:{challenge}"
+
+    if lmresp[20:48] == "0000000000000000000000000000":
+        if args.hcutils:
+            data['ct3_crack'] = f"{args.hcutils}/ct3_to_ntlm.bin {ct3} {clientchallenge} {lmresp}"
+        else:
+            data['ct3_crack'] = f"ct3_to_ntlm.bin {ct3} {clientchallenge} {lmresp}"
+        data['hash1'] = f"{ct1}:{srvchallenge}"
+        data['hash2'] = f"{ct2}:{srvchallenge}"
+
+    json_data = json.dumps(data)
+    if args.output:
+        with open(args.output, 'w') as json_file:
+            json.dump(data, json_file, indent=4)
+    else:
+        print(json_data)
+import hashlib
+import binascii
+import argparse
+import json
+import time
+import os
+
+def calc_md5_challenge(client_challenge, lm_resp):
+    combined_challenge = client_challenge + lm_resp[0:16]
+    m = hashlib.md5()
+    m.update(binascii.unhexlify(combined_challenge))
+    return m.hexdigest()
+
+parser = argparse.ArgumentParser()
+parser.add_argument('--ntlmv1', help='NTLMv1 Hash in responder format', required=True)
+parser.add_argument('--hashcat', help='hashcat path, eg: ~/git/hashcat', required=False)
+parser.add_argument('--hcutils', help='hashcat-utils path, eg: ~/git/hashcat-utils', required=False)
+parser.add_argument('--json', help='if this is set to anything it will output json, eg: --json 1', required=False)
+parser.add_argument('--output', help='output to a file, specify filename', required=False)
+args = parser.parse_args()
+
+# Splitting the NTLMv1 hash field
+hashsplit = args.ntlmv1.split(':')
+challenge = hashsplit[5]
+lmresp = hashsplit[3]
+ntresp = hashsplit[4]
+ct3 = ntresp[32:48]
+data = {
+    'ntlmv1': args.ntlmv1,
+    'user': hashsplit[0],
+    'domain': hashsplit[2],
+    'challenge': challenge,
+    'lmresp': lmresp,
+    'ntresp': ntresp,
+    'ct3': ct3
+}
+
+# Processing for different LM Response Conditions
+if lmresp[20:48] != "0000000000000000000000000000":
+    ct1 = ntresp[0:16]
+    ct2 = ntresp[16:32]
+    ct3 = ntresp[32:48]
+    output_data = {
+        'hostname': hashsplit[2],
+        'username': hashsplit[0],
+        'challenge': challenge,
+        'lm_response': lmresp,
+        'nt_response': ntresp,
+        'ct1': ct1,
+        'ct2': ct2,
+        'ct3': ct3
+    }
+
+    if args.json is None:
+        print("Hash Split Data: ", str(hashsplit))
+        print("Hostname: ", hashsplit[2])
+        print("Username: ", hashsplit[0])
+        print("Challenge: ", challenge)
+        print("LM Response: ", lmresp)
+        print("NT Response: ", ntresp)
+        print("CT1: ", ct1)
+        print("CT2: ", ct2)
+        print("CT3: ", ct3)
+        print("To Calculate Final NTLM Hash:")
+        if args.hcutils:
+            print(f"{args.hcutils}/ct3_to_ntlm.bin {ct3} {challenge}")
+        else:
+            print(f"./ct3_to_ntlm.bin {ct3} {challenge}")
+        print("To crack with hashcat, use this file:")
+        print(f"echo \"{ct1}:{challenge}\" >> 14000.hash")
+        print(f"echo \"{ct2}:{challenge}\" >> 14000.hash")
+        print(f"hashcat -m 14000 -a 3 -1 {args.hashcat}/charsets/DES_full.charset --hex-charset 14000.hash ?1?1?1?1?1?1?1?1")
+
+if lmresp[20:48] == "0000000000000000000000000000":
+    clientchallenge = hashsplit[5]
+    md5hash = calc_md5_challenge(clientchallenge, lmresp)
+    srvchallenge = md5hash[0:16]
+    data['srvchallenge'] = srvchallenge
+    ct1 = ntresp[0:16]
+    ct2 = ntresp[16:32]
+
+    if args.json is None:
+        print(f"Hash response is ESS, consider using responder with --lm or --disable-ess with a static challenge of 1122334455667788")
+        print(f"Client Challenge: {clientchallenge}")
+        print(f"Combined Challenge: {clientchallenge + lmresp[0:16]}")
+        print(f"MD5 Hash of Combined Challenge: {md5hash}")
+        print(f"Server Challenge: {srvchallenge}")
+        print("To calculate final NTLM hash use:")
+        if args.hcutils:
+            print(f"{args.hcutils}/ct3_to_ntlm.bin {ct3} {clientchallenge} {lmresp}")
+        else:
+            print(f"./ct3_to_ntlm.bin {ct3} {clientchallenge} {lmresp}")
+        print("To crack with hashcat, use this file:")
+        print(f"echo \"{ct1}:{srvchallenge}\" >> 14000.hash")
+        print(f"echo \"{ct2}:{srvchallenge}\" >> 14000.hash")
+        print(f"hashcat -m 14000 -a 3 -1 {args.hashcat}/charsets/DES_full.charset --hex-charset 14000.hash ?1?1?1?1?1?1?1?1")
+
+if args.json is not None:
+    if lmresp[20:48] != "0000000000000000000000000000":
+        if args.hcutils:
+            data['ct3_crack'] = f"{args.hcutils}/ct3_to_ntlm.bin {ct3} {challenge}"
+        else:
+            data['ct3_crack'] = f"ct3_to_ntlm.bin {ct3} {challenge}"
+        data['hash1'] = f"{ct1}:{challenge}"
+        data['hash2'] = f"{ct2}:{challenge}"
+
+    if lmresp[20:48] == "0000000000000000000000000000":
+        if args.hcutils:
+            data['ct3_crack'] = f"{args.hcutils}/ct3_to_ntlm.bin {ct3} {clientchallenge} {lmresp}"
+        else:
+            data['ct3_crack'] = f"ct3_to_ntlm.bin {ct3} {clientchallenge} {lmresp}"
+        data['hash1'] = f"{ct1}:{srvchallenge}"
+        data['hash2'] = f"{ct2}:{srvchallenge}"
+
+    json_data = json.dumps(data)
+    if args.output:
+        with open(args.output, 'w') as json_file:
+            json.dump(data, json_file, indent=4)
+    else:
+        print(json_data)
+import hashlib
+import binascii
+import argparse
+import json
+import time
+import os
+
+def calc_md5_challenge(client_challenge, lm_resp):
+    combined_challenge = client_challenge + lm_resp[0:16]
+    m = hashlib.md5()
+    m.update(binascii.unhexlify(combined_challenge))
+    return m.hexdigest()
+
+parser = argparse.ArgumentParser()
+parser.add_argument('--ntlmv1', help='NTLMv1 Hash in responder format', required=True)
+parser.add_argument('--hashcat', help='hashcat path, eg: ~/git/hashcat', required=False)
+parser.add_argument('--hcutils', help='hashcat-utils path, eg: ~/git/hashcat-utils', required=False)
+parser.add_argument('--json', help='if this is set to anything it will output json, eg: --json 1', required=False)
+parser.add_argument('--output', help='output to a file, specify filename', required=False)
+args = parser.parse_args()
+
+# Splitting the NTLMv1 hash field
+hashsplit = args.ntlmv1.split(':')
+challenge = hashsplit[5]
+lmresp = hashsplit[3]
+ntresp = hashsplit[4]
+ct3 = ntresp[32:48]
+data = {
+    'ntlmv1': args.ntlmv1,
+    'user': hashsplit[0],
+    'domain': hashsplit[2],
+    'challenge': challenge,
+    'lmresp': lmresp,
+    'ntresp': ntresp,
+    'ct3': ct3
+}
+
+# Processing for different LM Response Conditions
+if lmresp[20:48] != "0000000000000000000000000000":
+    ct1 = ntresp[0:16]
+    ct2 = ntresp[16:32]
+    ct3 = ntresp[32:48]
+    output_data = {
+        'hostname': hashsplit[2],
+        'username': hashsplit[0],
+        'challenge': challenge,
+        'lm_response': lmresp,
+        'nt_response': ntresp,
+        'ct1': ct1,
+        'ct2': ct2,
+        'ct3': ct3
+    }
+
+    if args.json is None:
+        print("Hash Split Data: ", str(hashsplit))
+        print("Hostname: ", hashsplit[2])
+        print("Username: ", hashsplit[0])
+        print("Challenge: ", challenge)
+        print("LM Response: ", lmresp)
+        print("NT Response: ", ntresp)
+        print("CT1: ", ct1)
+        print("CT2: ", ct2)
+        print("CT3: ", ct3)
+        print("To Calculate Final NTLM Hash:")
+        if args.hcutils:
+            print(f"{args.hcutils}/ct3_to_ntlm.bin {ct3} {challenge}")
+        else:
+            print(f"./ct3_to_ntlm.bin {ct3} {challenge}")
+        print("To crack with hashcat, use this file:")
+        print(f"echo \"{ct1}:{challenge}\" >> 14000.hash")
+        print(f"echo \"{ct2}:{challenge}\" >> 14000.hash")
+        print(f"hashcat -m 14000 -a 3 -1 {args.hashcat}/charsets/DES_full.charset --hex-charset 14000.hash ?1?1?1?1?1?1?1?1")
+
+if lmresp[20:48] == "0000000000000000000000000000":
+    clientchallenge = hashsplit[5]
+    md5hash = calc_md5_challenge(clientchallenge, lmresp)
+    srvchallenge = md5hash[0:16]
+    data['srvchallenge'] = srvchallenge
+    ct1 = ntresp[0:16]
+    ct2 = ntresp[16:32]
+
+    if args.json is None:
+        print(f"Hash response is ESS, consider using responder with --lm or --disable-ess with a static challenge of 1122334455667788")
+        print(f"Client Challenge: {clientchallenge}")
+        print(f"Combined Challenge: {clientchallenge + lmresp[0:16]}")
+        print(f"MD5 Hash of Combined Challenge: {md5hash}")
+        print(f"Server Challenge: {srvchallenge}")
+        print("To calculate final NTLM hash use:")
+        if args.hcutils:
+            print(f"{args.hcutils}/ct3_to_ntlm.bin {ct3} {clientchallenge} {lmresp}")
+        else:
+            print(f"./ct3_to_ntlm.bin {ct3} {clientchallenge} {lmresp}")
+        print("To crack with hashcat, use this file:")
+        print(f"echo \"{ct1}:{srvchallenge}\" >> 14000.hash")
+        print(f"echo \"{ct2}:{srvchallenge}\" >> 14000.hash")
+        print(f"hashcat -m 14000 -a 3 -1 {args.hashcat}/charsets/DES_full.charset --hex-charset 14000.hash ?1?1?1?1?1?1?1?1")
+
+if args.json is not None:
+    if lmresp[20:48] != "0000000000000000000000000000":
+        if args.hcutils:
+            data['ct3_crack'] = f"{args.hcutils}/ct3_to_ntlm.bin {ct3} {challenge}"
+        else:
+            data['ct3_crack'] = f"ct3_to_ntlm.bin {ct3} {challenge}"
+        data['hash1'] = f"{ct1}:{challenge}"
+        data['hash2'] = f"{ct2}:{challenge}"
+
+    if lmresp[20:48] == "0000000000000000000000000000":
+        if args.hcutils:
+            data['ct3_crack'] = f"{args.hcutils}/ct3_to_ntlm.bin {ct3} {clientchallenge} {lmresp}"
+        else:
+            data['ct3_crack'] = f"ct3_to_ntlm.bin {ct3} {clientchallenge} {lmresp}"
+        data['hash1'] = f"{ct1}:{srvchallenge}"
+        data['hash2'] = f"{ct2}:{srvchallenge}"
+
+    json_data = json.dumps(data)
+    if args.output:
+        with open(args.output, 'w') as json_file:
+            json.dump(data, json_file, indent=4)
+    else:
+        print(json_data)
+import hashlib
+import binascii
+import argparse
+import json
+import time
+import os
+
+def calc_md5_challenge(client_challenge, lm_resp):
+    combined_challenge = client_challenge + lm_resp[0:16]
+    m = hashlib.md5()
+    m.update(binascii.unhexlify(combined_challenge))
+    return m.hexdigest()
+
+parser = argparse.ArgumentParser()
+parser.add_argument('--ntlmv1', help='NTLMv1 Hash in responder format', required=True)
+parser.add_argument('--hashcat', help='hashcat path, eg: ~/git/hashcat', required=False)
+parser.add_argument('--hcutils', help='hashcat-utils path, eg: ~/git/hashcat-utils', required=False)
+parser.add_argument('--json', help='if this is set to anything it will output json, eg: --json 1', required=False)
+parser.add_argument('--output', help='output to a file, specify filename', required=False)
+args = parser.parse_args()
+
+# Splitting the NTLMv1 hash field
+hashsplit = args.ntlmv1.split(':')
+challenge = hashsplit[5]
+lmresp = hashsplit[3]
+ntresp = hashsplit[4]
+ct3 = ntresp[32:48]
+data = {
+    'ntlmv1': args.ntlmv1,
+    'user': hashsplit[0],
+    'domain': hashsplit[2],
+    'challenge': challenge,
+    'lmresp': lmresp,
+    'ntresp': ntresp,
+    'ct3': ct3
+}
+
+# Processing for different LM Response Conditions
+if lmresp[20:48] != "0000000000000000000000000000":
+    ct1 = ntresp[0:16]
+    ct2 = ntresp[16:32]
+    ct3 = ntresp[32:48]
+    output_data = {
+        'hostname': hashsplit[2],
+        'username': hashsplit[0],
+        'challenge': challenge,
+        'lm_response': lmresp,
+        'nt_response': ntresp,
+        'ct1': ct1,
+        'ct2': ct2,
+        'ct3': ct3
+    }
+
+    if args.json is None:
+        print("Hash Split Data: ", str(hashsplit))
+        print("Hostname: ", hashsplit[2])
+        print("Username: ", hashsplit[0])
+        print("Challenge: ", challenge)
+        print("LM Response: ", lmresp)
+        print("NT Response: ", ntresp)
+        print("CT1: ", ct1)
+        print("CT2: ", ct2)
+        print("CT3: ", ct3)
+        print("To Calculate Final NTLM Hash:")
+        if args.hcutils:
+            print(f"{args.hcutils}/ct3_to_ntlm.bin {ct3} {challenge}")
+        else:
+            print(f"./ct3_to_ntlm.bin {ct3} {challenge}")
+        print("To crack with hashcat, use this file:")
+        print(f"echo \"{ct1}:{challenge}\" >> 14000.hash")
+        print(f"echo \"{ct2}:{challenge}\" >> 14000.hash")
+        print(f"hashcat -m 14000 -a 3 -1 {args.hashcat}/charsets/DES_full.charset --hex-charset 14000.hash ?1?1?1?1?1?1?1?1")
+
+if lmresp[20:48] == "0000000000000000000000000000":
+    clientchallenge = hashsplit[5]
+    md5hash = calc_md5_challenge(clientchallenge, lmresp)
+    srvchallenge = md5hash[0:16]
+    data['srvchallenge'] = srvchallenge
+    ct1 = ntresp[0:16]
+    ct2 = ntresp[16:32]
+
+    if args.json is None:
+        print(f"Hash response is ESS, consider using responder with --lm or --disable-ess with a static challenge of 1122334455667788")
+        print(f"Client Challenge: {clientchallenge}")
+        print(f"Combined Challenge: {clientchallenge + lmresp[0:16]}")
+        print(f"MD5 Hash of Combined Challenge: {md5hash}")
+        print(f"Server Challenge: {srvchallenge}")
+        print("To calculate final NTLM hash use:")
+        if args.hcutils:
+            print(f"{args.hcutils}/ct3_to_ntlm.bin {ct3} {clientchallenge} {lmresp}")
+        else:
+            print(f"./ct3_to_ntlm.bin {ct3} {clientchallenge} {lmresp}")
+        print("To crack with hashcat, use this file:")
+        print(f"echo \"{ct1}:{srvchallenge}\" >> 14000.hash")
+        print(f"echo \"{ct2}:{srvchallenge}\" >> 14000.hash")
+        print(f"hashcat -m 14000 -a 3 -1 {args.hashcat}/charsets/DES_full.charset --hex-charset 14000.hash ?1?1?1?1?1?1?1?1")
+
+if args.json is not None:
+    if lmresp[20:48] != "0000000000000000000000000000":
+        if args.hcutils:
+            data['ct3_crack'] = f"{args.hcutils}/ct3_to_ntlm.bin {ct3} {challenge}"
+        else:
+            data['ct3_crack'] = f"ct3_to_ntlm.bin {ct3} {challenge}"
+        data['hash1'] = f"{ct1}:{challenge}"
+        data['hash2'] = f"{ct2}:{challenge}"
+
+    if lmresp[20:48] == "0000000000000000000000000000":
+        if args.hcutils:
+            data['ct3_crack'] = f"{args.hcutils}/ct3_to_ntlm.bin {ct3} {clientchallenge} {lmresp}"
+        else:
+            data['ct3_crack'] = f"ct3_to_ntlm.bin {ct3} {clientchallenge} {lmresp}"
+        data['hash1'] = f"{ct1}:{srvchallenge}"
+        data['hash2'] = f"{ct2}:{srvchallenge}"
+
+    json_data = json.dumps(data)
+    if args.output:
+        with open(args.output, 'w') as json_file:
+            json.dump(data, json_file, indent=4)
+    else:
+        print(json_data)
+import hashlib
+import binascii
+import argparse
+import json
+import time
+import os
+
+def calc_md5_challenge(client_challenge, lm_resp):
+    combined_challenge = client_challenge + lm_resp[0:16]
+    m = hashlib.md5()
+    m.update(binascii.unhexlify(combined_challenge))
+    return m.hexdigest()
+
+parser = argparse.ArgumentParser()
+parser.add_argument('--ntlmv1', help='NTLMv1 Hash in responder format', required=True)
+parser.add_argument('--hashcat', help='hashcat path, eg: ~/git/hashcat', required=False)
+parser.add_argument('--hcutils', help='hashcat-utils path, eg: ~/git/hashcat-utils', required=False)
+parser.add_argument('--json', help='if this is set to anything it will output json, eg: --json 1', required=False)
+parser.add_argument('--output', help='output to a file, specify filename', required=False)
+args = parser.parse_args()
+
+# Splitting the NTLMv1 hash field
+hashsplit = args.ntlmv1.split(':')
+challenge = hashsplit[5]
+lmresp = hashsplit[3]
+ntresp = hashsplit[4]
+ct3 = ntresp[32:48]
+data = {
+    'ntlmv1': args.ntlmv1,
+    'user': hashsplit[0],
+    'domain': hashsplit[2],
+    'challenge': challenge,
+    'lmresp': lmresp,
+    'ntresp': ntresp,
+    'ct3': ct3
+}
+
+# Processing for different LM Response Conditions
+if lmresp[20:48] != "0000000000000000000000000000":
+    ct1 = ntresp[0:16]
+    ct2 = ntresp[16:32]
+    ct3 = ntresp[32:48]
+    output_data = {
+        'hostname': hashsplit[2],
+        'username': hashsplit[0],
+        'challenge': challenge,
+        'lm_response': lmresp,
+        'nt_response': ntresp,
+        'ct1': ct1,
+        'ct2': ct2,
+        'ct3': ct3
+    }
+
+    if args.json is None:
+        print("Hash Split Data: ", str(hashsplit))
+        print("Hostname: ", hashsplit[2])
+        print("Username: ", hashsplit[0])
+        print("Challenge: ", challenge)
+        print("LM Response: ", lmresp)
+        print("NT Response: ", ntresp)
+        print("CT1: ", ct1)
+        print("CT2: ", ct2)
+        print("CT3: ", ct3)
+        print("To Calculate Final NTLM Hash:")
+        if args.hcutils:
+            print(f"{args.hcutils}/ct3_to_ntlm.bin {ct3} {challenge}")
+        else:
+            print(f"./ct3_to_ntlm.bin {ct3} {challenge}")
+        print("To crack with hashcat, use this file:")
+        print(f"echo \"{ct1}:{challenge}\" >> 14000.hash")
+        print(f"echo \"{ct2}:{challenge}\" >> 14000.hash")
+        print(f"hashcat -m 14000 -a 3 -1 {args.hashcat}/charsets/DES_full.charset --hex-charset 14000.hash ?1?1?1?1?1?1?1?1")
+
+if lmresp[20:48] == "0000000000000000000000000000":
+    clientchallenge = hashsplit[5]
+    md5hash = calc_md5_challenge(clientchallenge, lmresp)
+    srvchallenge = md5hash[0:16]
+    data['srvchallenge'] = srvchallenge
+    ct1 = ntresp[0:16]
+    ct2 = ntresp[16:32]
+
+    if args.json is None:
+        print(f"Hash response is ESS, consider using responder with --lm or --disable-ess with a static challenge of 1122334455667788")
+        print(f"Client Challenge: {clientchallenge}")
+        print(f"Combined Challenge: {clientchallenge + lmresp[0:16]}")
+        print(f"MD5 Hash of Combined Challenge: {md5hash}")
+        print(f"Server Challenge: {srvchallenge}")
+        print("To calculate final NTLM hash use:")
+        if args.hcutils:
+            print(f"{args.hcutils}/ct3_to_ntlm.bin {ct3} {clientchallenge} {lmresp}")
+        else:
+            print(f"./ct3_to_ntlm.bin {ct3} {clientchallenge} {lmresp}")
+        print("To crack with hashcat, use this file:")
+        print(f"echo \"{ct1}:{srvchallenge}\" >> 14000.hash")
+        print(f"echo \"{ct2}:{srvchallenge}\" >> 14000.hash")
+        print(f"hashcat -m 14000 -a 3 -1 {args.hashcat}/charsets/DES_full.charset --hex-charset 14000.hash ?1?1?1?1?1?1?1?1")
+
+if args.json is not None:
+    if lmresp[20:48] != "0000000000000000000000000000":
+        if args.hcutils:
+            data['ct3_crack'] = f"{args.hcutils}/ct3_to_ntlm.bin {ct3} {challenge}"
+        else:
+            data['ct3_crack'] = f"ct3_to_ntlm.bin {ct3} {challenge}"
+        data['hash1'] = f"{ct1}:{challenge}"
+        data['hash2'] = f"{ct2}:{challenge}"
+
+    if lmresp[20:48] == "0000000000000000000000000000":
+        if args.hcutils:
+            data['ct3_crack'] = f"{args.hcutils}/ct3_to_ntlm.bin {ct3} {clientchallenge} {lmresp}"
+        else:
+            data['ct3_crack'] = f"ct3_to_ntlm.bin {ct3} {clientchallenge} {lmresp}"
+        data['hash1'] = f"{ct1}:{srvchallenge}"
+        data['hash2'] = f"{ct2}:{srvchallenge}"
+
+    json_data = json.dumps(data)
+    if args.output:
+        with open(args.output, 'w') as json_file:
+            json.dump(data, json_file, indent=4)
+    else:
+        print(json_data)
+import hashlib
+import binascii
+import argparse
+import json
+import time
+import os
+
+def calc_md5_challenge(client_challenge, lm_resp):
+    combined_challenge = client_challenge + lm_resp[0:16]
+    m = hashlib.md5()
+    m.update(binascii.unhexlify(combined_challenge))
+    return m.hexdigest()
+
+parser = argparse.ArgumentParser()
+parser.add_argument('--ntlmv1', help='NTLMv1 Hash in responder format', required=True)
+parser.add_argument('--hashcat', help='hashcat path, eg: ~/git/hashcat', required=False)
+parser.add_argument('--hcutils', help='hashcat-utils path, eg: ~/git/hashcat-utils', required=False)
+parser.add_argument('--json', help='if this is set to anything it will output json, eg: --json 1', required=False)
+parser.add_argument('--output', help='output to a file, specify filename', required=False)
+args = parser.parse_args()
+
+# Splitting the NTLMv1 hash field
+hashsplit = args.ntlmv1.split(':')
+challenge = hashsplit[5]
+lmresp = hashsplit[3]
+ntresp = hashsplit[4]
+ct3 = ntresp[32:48]
+data = {
+    'ntlmv1': args.ntlmv1,
+    'user': hashsplit[0],
+    'domain': hashsplit[2],
+    'challenge': challenge,
+    'lmresp': lmresp,
+    'ntresp': ntresp,
+    'ct3': ct3
+}
+
+# Processing for different LM Response Conditions
+if lmresp[20:48] != "0000000000000000000000000000":
+    ct1 = ntresp[0:16]
+    ct2 = ntresp[16:32]
+    ct3 = ntresp[32:48]
+    output_data = {
+        'hostname': hashsplit[2],
+        'username': hashsplit[0],
+        'challenge': challenge,
+        'lm_response': lmresp,
+        'nt_response': ntresp,
+        'ct1': ct1,
+        'ct2': ct2,
+        'ct3': ct3
+    }
+
+    if args.json is None:
+        print("Hash Split Data: ", str(hashsplit))
+        print("Hostname: ", hashsplit[2])
+        print("Username: ", hashsplit[0])
+        print("Challenge: ", challenge)
+        print("LM Response: ", lmresp)
+        print("NT Response: ", ntresp)
+        print("CT1: ", ct1)
+        print("CT2: ", ct2)
+        print("CT3: ", ct3)
+        print("To Calculate Final NTLM Hash:")
+        if args.hcutils:
+            print(f"{args.hcutils}/ct3_to_ntlm.bin {ct3} {challenge}")
+        else:
+            print(f"./ct3_to_ntlm.bin {ct3} {challenge}")
+        print("To crack with hashcat, use this file:")
+        print(f"echo \"{ct1}:{challenge}\" >> 14000.hash")
+        print(f"echo \"{ct2}:{challenge}\" >> 14000.hash")
+        print(f"hashcat -m 14000 -a 3 -1 {args.hashcat}/charsets/DES_full.charset --hex-charset 14000.hash ?1?1?1?1?1?1?1?1")
+
+if lmresp[20:48] == "0000000000000000000000000000":
+    clientchallenge = hashsplit[5]
+    md5hash = calc_md5_challenge(clientchallenge, lmresp)
+    srvchallenge = md5hash[0:16]
+    data['srvchallenge'] = srvchallenge
+    ct1 = ntresp[0:16]
+    ct2 = ntresp[16:32]
+
+    if args.json is None:
+        print(f"Hash response is ESS, consider using responder with --lm or --disable-ess with a static challenge of 1122334455667788")
+        print(f"Client Challenge: {clientchallenge}")
+        print(f"Combined Challenge: {clientchallenge + lmresp[0:16]}")
+        print(f"MD5 Hash of Combined Challenge: {md5hash}")
+        print(f"Server Challenge: {srvchallenge}")
+        print("To calculate final NTLM hash use:")
+        if args.hcutils:
+            print(f"{args.hcutils}/ct3_to_ntlm.bin {ct3} {clientchallenge} {lmresp}")
+        else:
+            print(f"./ct3_to_ntlm.bin {ct3} {clientchallenge} {lmresp}")
+        print("To crack with hashcat, use this file:")
+        print(f"echo \"{ct1}:{srvchallenge}\" >> 14000.hash")
+        print(f"echo \"{ct2}:{srvchallenge}\" >> 14000.hash")
+        print(f"hashcat -m 14000 -a 3 -1 {args.hashcat}/charsets/DES_full.charset --hex-charset 14000.hash ?1?1?1?1?1?1?1?1")
+
+if args.json is not None:
+    if lmresp[20:48] != "0000000000000000000000000000":
+        if args.hcutils:
+            data['ct3_crack'] = f"{args.hcutils}/ct3_to_ntlm.bin {ct3} {challenge}"
+        else:
+            data['ct3_crack'] = f"ct3_to_ntlm.bin {ct3} {challenge}"
+        data['hash1'] = f"{ct1}:{challenge}"
+        data['hash2'] = f"{ct2}:{challenge}"
+
+    if lmresp[20:48] == "0000000000000000000000000000":
+        if args.hcutils:
+            data['ct3_crack'] = f"{args.hcutils}/ct3_to_ntlm.bin {ct3} {clientchallenge} {lmresp}"
+        else:
+            data['ct3_crack'] = f"ct3_to_ntlm.bin {ct3} {clientchallenge} {lmresp}"
+        data['hash1'] = f"{ct1}:{srvchallenge}"
+        data['hash2'] = f"{ct2}:{srvchallenge}"
+
+    json_data = json.dumps(data)
+    if args.output:
+        with open(args.output, 'w') as json_file:
+            json.dump(data, json_file, indent=4)
+    else:
+        print(json_data)
+import hashlib
+import binascii
+import argparse
+import json
+import time
+import os
+
+def calc_md5_challenge(client_challenge, lm_resp):
+    combined_challenge = client_challenge + lm_resp[0:16]
+    m = hashlib.md5()
+    m.update(binascii.unhexlify(combined_challenge))
+    return m.hexdigest()
+
+parser = argparse.ArgumentParser()
+parser.add_argument('--ntlmv1', help='NTLMv1 Hash in responder format', required=True)
+parser.add_argument('--hashcat', help='hashcat path, eg: ~/git/hashcat', required=False)
+parser.add_argument('--hcutils', help='hashcat-utils path, eg: ~/git/hashcat-utils', required=False)
+parser.add_argument('--json', help='if this is set to anything it will output json, eg: --json 1', required=False)
+parser.add_argument('--output', help='output to a file, specify filename', required=False)
+args = parser.parse_args()
+
+# Splitting the NTLMv1 hash field
+hashsplit = args.ntlmv1.split(':')
+challenge = hashsplit[5]
+lmresp = hashsplit[3]
+ntresp = hashsplit[4]
+ct3 = ntresp[32:48]
+data = {
+    'ntlmv1': args.ntlmv1,
+    'user': hashsplit[0],
+    'domain': hashsplit[2],
+    'challenge': challenge,
+    'lmresp': lmresp,
+    'ntresp': ntresp,
+    'ct3': ct3
+}
+
+# Processing for different LM Response Conditions
+if lmresp[20:48] != "0000000000000000000000000000":
+    ct1 = ntresp[0:16]
+    ct2 = ntresp[16:32]
+    ct3 = ntresp[32:48]
+    output_data = {
+        'hostname': hashsplit[2],
+        'username': hashsplit[0],
+        'challenge': challenge,
+        'lm_response': lmresp,
+        'nt_response': ntresp,
+        'ct1': ct1,
+        'ct2': ct2,
+        'ct3': ct3
+    }
+
+    if args.json is None:
+        print("Hash Split Data: ", str(hashsplit))
+        print("Hostname: ", hashsplit[2])
+        print("Username: ", hashsplit[0])
+        print("Challenge: ", challenge)
+        print("LM Response: ", lmresp)
+        print("NT Response: ", ntresp)
+        print("CT1: ", ct1)
+        print("CT2: ", ct2)
+        print("CT3: ", ct3)
+        print("To Calculate Final NTLM Hash:")
+        if args.hcutils:
+            print(f"{args.hcutils}/ct3_to_ntlm.bin {ct3} {challenge}")
+        else:
+            print(f"./ct3_to_ntlm.bin {ct3} {challenge}")
+        print("To crack with hashcat, use this file:")
+        print(f"echo \"{ct1}:{challenge}\" >> 14000.hash")
+        print(f"echo \"{ct2}:{challenge}\" >> 14000.hash")
+        print(f"hashcat -m 14000 -a 3 -1 {args.hashcat}/charsets/DES_full.charset --hex-charset 14000.hash ?1?1?1?1?1?1?1?1")
+
+if lmresp[20:48] == "0000000000000000000000000000":
+    clientchallenge = hashsplit[5]
+    md5hash = calc_md5_challenge(clientchallenge, lmresp)
+    srvchallenge = md5hash[0:16]
+    data['srvchallenge'] = srvchallenge
+    ct1 = ntresp[0:16]
+    ct2 = ntresp[16:32]
+
+    if args.json is None:
+        print(f"Hash response is ESS, consider using responder with --lm or --disable-ess with a static challenge of 1122334455667788")
+        print(f"Client Challenge: {clientchallenge}")
+        print(f"Combined Challenge: {clientchallenge + lmresp[0:16]}")
+        print(f"MD5 Hash of Combined Challenge: {md5hash}")
+        print(f"Server Challenge: {srvchallenge}")
+        print("To calculate final NTLM hash use:")
+        if args.hcutils:
+            print(f"{args.hcutils}/ct3_to_ntlm.bin {ct3} {clientchallenge} {lmresp}")
+        else:
+            print(f"./ct3_to_ntlm.bin {ct3} {clientchallenge} {lmresp}")
+        print("To crack with hashcat, use this file:")
+        print(f"echo \"{ct1}:{srvchallenge}\" >> 14000.hash")
+        print(f"echo \"{ct2}:{srvchallenge}\" >> 14000.hash")
+        print(f"hashcat -m 14000 -a 3 -1 {args.hashcat}/charsets/DES_full.charset --hex-charset 14000.hash ?1?1?1?1?1?1?1?1")
+
+if args.json is not None:
+    if lmresp[20:48] != "0000000000000000000000000000":
+        if args.hcutils:
+            data['ct3_crack'] = f"{args.hcutils}/ct3_to_ntlm.bin {ct3} {challenge}"
+        else:
+            data['ct3_crack'] = f"ct3_to_ntlm.bin {ct3} {challenge}"
+        data['hash1'] = f"{ct1}:{challenge}"
+        data['hash2'] = f"{ct2}:{challenge}"
+
+    if lmresp[20:48] == "0000000000000000000000000000":
+        if args.hcutils:
+            data['ct3_crack'] = f"{args.hcutils}/ct3_to_ntlm.bin {ct3} {clientchallenge} {lmresp}"
+        else:
+            data['ct3_crack'] = f"ct3_to_ntlm.bin {ct3} {clientchallenge} {lmresp}"
+        data['hash1'] = f"{ct1}:{srvchallenge}"
+        data['hash2'] = f"{ct2}:{srvchallenge}"
+
+    json_data = json.dumps(data)
+    if args.output:
+        with open(args.output, 'w') as json_file:
+            json.dump(data, json_file, indent=4)
+    else:
+        print(json_data)
+import hashlib
+import binascii
+import argparse
+import json
+import time
+import os
+
+def calc_md5_challenge(client_challenge, lm_resp):
+    combined_challenge = client_challenge + lm_resp[0:16]
+    m = hashlib.md5()
+    m.update(binascii.unhexlify(combined_challenge))
+    return m.hexdigest()
+
+parser = argparse.ArgumentParser()
+parser.add_argument('--ntlmv1', help='NTLMv1 Hash in responder format', required=True)
+parser.add_argument('--hashcat', help='hashcat path, eg: ~/git/hashcat', required=False)
+parser.add_argument('--hcutils', help='hashcat-utils path, eg: ~/git/hashcat-utils', required=False)
+parser.add_argument('--json', help='if this is set to anything it will output json, eg: --json 1', required=False)
+parser.add_argument('--output', help='output to a file, specify filename', required=False)
+args = parser.parse_args()
+
+# Splitting the NTLMv1 hash field
+hashsplit = args.ntlmv1.split(':')
+challenge = hashsplit[5]
+lmresp = hashsplit[3]
+ntresp = hashsplit[4]
+ct3 = ntresp[32:48]
+data = {
+    'ntlmv1': args.ntlmv1,
+    'user': hashsplit[0],
+    'domain': hashsplit[2],
+    'challenge': challenge,
+    'lmresp': lmresp,
+    'ntresp': ntresp,
+    'ct3': ct3
+}
+
+# Processing for different LM Response Conditions
+if lmresp[20:48] != "0000000000000000000000000000":
+    ct1 = ntresp[0:16]
+    ct2 = ntresp[16:32]
+    ct3 = ntresp[32:48]
+    output_data = {
+        'hostname': hashsplit[2],
+        'username': hashsplit[0],
+        'challenge': challenge,
+        'lm_response': lmresp,
+        'nt_response': ntresp,
+        'ct1': ct1,
+        'ct2': ct2,
+        'ct3': ct3
+    }
+
+    if args.json is None:
+        print("Hash Split Data: ", str(hashsplit))
+        print("Hostname: ", hashsplit[2])
+        print("Username: ", hashsplit[0])
+        print("Challenge: ", challenge)
+        print("LM Response: ", lmresp)
+        print("NT Response: ", ntresp)
+        print("CT1: ", ct1)
+        print("CT2: ", ct2)
+        print("CT3: ", ct3)
+        print("To Calculate Final NTLM Hash:")
+        if args.hcutils:
+            print(f"{args.hcutils}/ct3_to_ntlm.bin {ct3} {challenge}")
+        else:
+            print(f"./ct3_to_ntlm.bin {ct3} {challenge}")
+        print("To crack with hashcat, use this file:")
+        print(f"echo \"{ct1}:{challenge}\" >> 14000.hash")
+        print(f"echo \"{ct2}:{challenge}\" >> 14000.hash")
+        print(f"hashcat -m 14000 -a 3 -1 {args.hashcat}/charsets/DES_full.charset --hex-charset 14000.hash ?1?1?1?1?1?1?1?1")
+
+if lmresp[20:48] == "0000000000000000000000000000":
+    clientchallenge = hashsplit[5]
+    md5hash = calc_md5_challenge(clientchallenge, lmresp)
+    srvchallenge = md5hash[0:16]
+    data['srvchallenge'] = srvchallenge
+    ct1 = ntresp[0:16]
+    ct2 = ntresp[16:32]
+
+    if args.json is None:
+        print(f"Hash response is ESS, consider using responder with --lm or --disable-ess with a static challenge of 1122334455667788")
+        print(f"Client Challenge: {clientchallenge}")
+        print(f"Combined Challenge: {clientchallenge + lmresp[0:16]}")
+        print(f"MD5 Hash of Combined Challenge: {md5hash}")
+        print(f"Server Challenge: {srvchallenge}")
+        print("To calculate final NTLM hash use:")
+        if args.hcutils:
+            print(f"{args.hcutils}/ct3_to_ntlm.bin {ct3} {clientchallenge} {lmresp}")
+        else:
+            print(f"./ct3_to_ntlm.bin {ct3} {clientchallenge} {lmresp}")
+        print("To crack with hashcat, use this file:")
+        print(f"echo \"{ct1}:{srvchallenge}\" >> 14000.hash")
+        print(f"echo \"{ct2}:{srvchallenge}\" >> 14000.hash")
+        print(f"hashcat -m 14000 -a 3 -1 {args.hashcat}/charsets/DES_full.charset --hex-charset 14000.hash ?1?1?1?1?1?1?1?1")
+
+if args.json is not None:
+    if lmresp[20:48] != "0000000000000000000000000000":
+        if args.hcutils:
+            data['ct3_crack'] = f"{args.hcutils}/ct3_to_ntlm.bin {ct3} {challenge}"
+        else:
+            data['ct3_crack'] = f"ct3_to_ntlm.bin {ct3} {challenge}"
+        data['hash1'] = f"{ct1}:{challenge}"
+        data['hash2'] = f"{ct2}:{challenge}"
+
+    if lmresp[20:48] == "0000000000000000000000000000":
+        if args.hcutils:
+            data['ct3_crack'] = f"{args.hcutils}/ct3_to_ntlm.bin {ct3} {clientchallenge} {lmresp}"
+        else:
+            data['ct3_crack'] = f"ct3_to_ntlm.bin {ct3} {clientchallenge} {lmresp}"
+        data['hash1'] = f"{ct1}:{srvchallenge}"
+        data['hash2'] = f"{ct2}:{srvchallenge}"
+
+    json_data = json.dumps(data)
+    if args.output:
+        with open(args.output, 'w') as json_file:
+            json.dump(data, json_file, indent=4)
+    else:
+        print(json_data)
+import hashlib
+import binascii
+import argparse
+import json
+import time
+import os
+
+def calc_md5_challenge(client_challenge, lm_resp):
+    combined_challenge = client_challenge + lm_resp[0:16]
+    m = hashlib.md5()
+    m.update(binascii.unhexlify(combined_challenge))
+    return m.hexdigest()
+
+parser = argparse.ArgumentParser()
+parser.add_argument('--ntlmv1', help='NTLMv1 Hash in responder format', required=True)
+parser.add_argument('--hashcat', help='hashcat path, eg: ~/git/hashcat', required=False)
+parser.add_argument('--hcutils', help='hashcat-utils path, eg: ~/git/hashcat-utils', required=False)
+parser.add_argument('--json', help='if this is set to anything it will output json, eg: --json 1', required=False)
+parser.add_argument('--output', help='output to a file, specify filename', required=False)
+args = parser.parse_args()
+
+# Splitting the NTLMv1 hash field
+hashsplit = args.ntlmv1.split(':')
+challenge = hashsplit[5]
+lmresp = hashsplit[3]
+ntresp = hashsplit[4]
+ct3 = ntresp[32:48]
+data = {
+    'ntlmv1': args.ntlmv1,
+    'user': hashsplit[0],
+    'domain': hashsplit[2],
+    'challenge': challenge,
+    'lmresp': lmresp,
+    'ntresp': ntresp,
+    'ct3': ct3
+}
+
+# Processing for different LM Response Conditions
+if lmresp[20:48] != "0000000000000000000000000000":
+    ct1 = ntresp[0:16]
+    ct2 = ntresp[16:32]
+    ct3 = ntresp[32:48]
+    output_data = {
+        'hostname': hashsplit[2],
+        'username': hashsplit[0],
+        'challenge': challenge,
+        'lm_response': lmresp,
+        'nt_response': ntresp,
+        'ct1': ct1,
+        'ct2': ct2,
+        'ct3': ct3
+    }
+
+    if args.json is None:
+        print("Hash Split Data: ", str(hashsplit))
+        print("Hostname: ", hashsplit[2])
+        print("Username: ", hashsplit[0])
+        print("Challenge: ", challenge)
+        print("LM Response: ", lmresp)
+        print("NT Response: ", ntresp)
+        print("CT1: ", ct1)
+        print("CT2: ", ct2)
+        print("CT3: ", ct3)
+        print("To Calculate Final NTLM Hash:")
+        if args.hcutils:
+            print(f"{args.hcutils}/ct3_to_ntlm.bin {ct3} {challenge}")
+        else:
+            print(f"./ct3_to_ntlm.bin {ct3} {challenge}")
+        print("To crack with hashcat, use this file:")
+        print(f"echo \"{ct1}:{challenge}\" >> 14000.hash")
+        print(f"echo \"{ct2}:{challenge}\" >> 14000.hash")
+        print(f"hashcat -m 14000 -a 3 -1 {args.hashcat}/charsets/DES_full.charset --hex-charset 14000.hash ?1?1?1?1?1?1?1?1")
+
+if lmresp[20:48] == "0000000000000000000000000000":
+    clientchallenge = hashsplit[5]
+    md5hash = calc_md5_challenge(clientchallenge, lmresp)
+    srvchallenge = md5hash[0:16]
+    data['srvchallenge'] = srvchallenge
+    ct1 = ntresp[0:16]
+    ct2 = ntresp[16:32]
+
+    if args.json is None:
+        print(f"Hash response is ESS, consider using responder with --lm or --disable-ess with a static challenge of 1122334455667788")
+        print(f"Client Challenge: {clientchallenge}")
+        print(f"Combined Challenge: {clientchallenge + lmresp[0:16]}")
+        print(f"MD5 Hash of Combined Challenge: {md5hash}")
+        print(f"Server Challenge: {srvchallenge}")
+        print("To calculate final NTLM hash use:")
+        if args.hcutils:
+            print(f"{args.hcutils}/ct3_to_ntlm.bin {ct3} {clientchallenge} {lmresp}")
+        else:
+            print(f"./ct3_to_ntlm.bin {ct3} {clientchallenge} {lmresp}")
+        print("To crack with hashcat, use this file:")
+        print(f"echo \"{ct1}:{srvchallenge}\" >> 14000.hash")
+        print(f"echo \"{ct2}:{srvchallenge}\" >> 14000.hash")
+        print(f"hashcat -m 14000 -a 3 -1 {args.hashcat}/charsets/DES_full.charset --hex-charset 14000.hash ?1?1?1?1?1?1?1?1")
+
+if args.json is not None:
+    if lmresp[20:48] != "0000000000000000000000000000":
+        if args.hcutils:
+            data['ct3_crack'] = f"{args.hcutils}/ct3_to_ntlm.bin {ct3} {challenge}"
+        else:
+            data['ct3_crack'] = f"ct3_to_ntlm.bin {ct3} {challenge}"
+        data['hash1'] = f"{ct1}:{challenge}"
+        data['hash2'] = f"{ct2}:{challenge}"
+
+    if lmresp[20:48] == "0000000000000000000000000000":
+        if args.hcutils:
+            data['ct3_crack'] = f"{args.hcutils}/ct3_to_ntlm.bin {ct3} {clientchallenge} {lmresp}"
+        else:
+            data['ct3_crack'] = f"ct3_to_ntlm.bin {ct3} {clientchallenge} {lmresp}"
+        data['hash1'] = f"{ct1}:{srvchallenge}"
+        data['hash2'] = f"{ct2}:{srvchallenge}"
+
+    json_data = json.dumps(data)
+    if args.output:
+        with open(args.output, 'w') as json_file:
+            json.dump(data, json_file, indent=4)
+    else:
+        print(json_data)
+import hashlib
+import binascii
+import argparse
+import json
+import time
+import os
+
+def calc_md5_challenge(client_challenge, lm_resp):
+    combined_challenge = client_challenge + lm_resp[0:16]
+    m = hashlib.md5()
+    m.update(binascii.unhexlify(combined_challenge))
+    return m.hexdigest()
+
+parser = argparse.ArgumentParser()
+parser.add_argument('--ntlmv1', help='NTLMv1 Hash in responder format', required=True)
+parser.add_argument('--hashcat', help='hashcat path, eg: ~/git/hashcat', required=False)
+parser.add_argument('--hcutils', help='hashcat-utils path, eg: ~/git/hashcat-utils', required=False)
+parser.add_argument('--json', help='if this is set to anything it will output json, eg: --json 1', required=False)
+parser.add_argument('--output', help='output to a file, specify filename', required=False)
+args = parser.parse_args()
+
+# Splitting the NTLMv1 hash field
+hashsplit = args.ntlmv1.split(':')
+challenge = hashsplit[5]
+lmresp = hashsplit[3]
+ntresp = hashsplit[4]
+ct3 = ntresp[32:48]
+data = {
+    'ntlmv1': args.ntlmv1,
+    'user': hashsplit[0],
+    'domain': hashsplit[2],
+    'challenge': challenge,
+    'lmresp': lmresp,
+    'ntresp': ntresp,
+    'ct3': ct3
+}
+
+# Processing for different LM Response Conditions
+if lmresp[20:48] != "0000000000000000000000000000":
+    ct1 = ntresp[0:16]
+    ct2 = ntresp[16:32]
+    ct3 = ntresp[32:48]
+    output_data = {
+        'hostname': hashsplit[2],
+        'username': hashsplit[0],
+        'challenge': challenge,
+        'lm_response': lmresp,
+        'nt_response': ntresp,
+        'ct1': ct1,
+        'ct2': ct2,
+        'ct3': ct3
+    }
+
+    if args.json is None:
+        print("Hash Split Data: ", str(hashsplit))
+        print("Hostname: ", hashsplit[2])
+        print("Username: ", hashsplit[0])
+        print("Challenge: ", challenge)
+        print("LM Response: ", lmresp)
+        print("NT Response: ", ntresp)
+        print("CT1: ", ct1)
+        print("CT2: ", ct2)
+        print("CT3: ", ct3)
+        print("To Calculate Final NTLM Hash:")
+        if args.hcutils:
+            print(f"{args.hcutils}/ct3_to_ntlm.bin {ct3} {challenge}")
+        else:
+            print(f"./ct3_to_ntlm.bin {ct3} {challenge}")
+        print("To crack with hashcat, use this file:")
+        print(f"echo \"{ct1}:{challenge}\" >> 14000.hash")
+        print(f"echo \"{ct2}:{challenge}\" >> 14000.hash")
+        print(f"hashcat -m 14000 -a 3 -1 {args.hashcat}/charsets/DES_full.charset --hex-charset 14000.hash ?1?1?1?1?1?1?1?1")
+
+if lmresp[20:48] == "0000000000000000000000000000":
+    clientchallenge = hashsplit[5]
+    md5hash = calc_md5_challenge(clientchallenge, lmresp)
+    srvchallenge = md5hash[0:16]
+    data['srvchallenge'] = srvchallenge
+    ct1 = ntresp[0:16]
+    ct2 = ntresp[16:32]
+
+    if args.json is None:
+        print(f"Hash response is ESS, consider using responder with --lm or --disable-ess with a static challenge of 1122334455667788")
+        print(f"Client Challenge: {clientchallenge}")
+        print(f"Combined Challenge: {clientchallenge + lmresp[0:16]}")
+        print(f"MD5 Hash of Combined Challenge: {md5hash}")
+        print(f"Server Challenge: {srvchallenge}")
+        print("To calculate final NTLM hash use:")
+        if args.hcutils:
+            print(f"{args.hcutils}/ct3_to_ntlm.bin {ct3} {clientchallenge} {lmresp}")
+        else:
+            print(f"./ct3_to_ntlm.bin {ct3} {clientchallenge} {lmresp}")
+        print("To crack with hashcat, use this file:")
+        print(f"echo \"{ct1}:{srvchallenge}\" >> 14000.hash")
+        print(f"echo \"{ct2}:{srvchallenge}\" >> 14000.hash")
+        print(f"hashcat -m 14000 -a 3 -1 {args.hashcat}/charsets/DES_full.charset --hex-charset 14000.hash ?1?1?1?1?1?1?1?1")
+
+if args.json is not None:
+    if lmresp[20:48] != "0000000000000000000000000000":
+        if args.hcutils:
+            data['ct3_crack'] = f"{args.hcutils}/ct3_to_ntlm.bin {ct3} {challenge}"
+        else:
+            data['ct3_crack'] = f"ct3_to_ntlm.bin {ct3} {challenge}"
+        data['hash1'] = f"{ct1}:{challenge}"
+        data['hash2'] = f"{ct2}:{challenge}"
+
+    if lmresp[20:48] == "0000000000000000000000000000":
+        if args.hcutils:
+            data['ct3_crack'] = f"{args.hcutils}/ct3_to_ntlm.bin {ct3} {clientchallenge} {lmresp}"
+        else:
+            data['ct3_crack'] = f"ct3_to_ntlm.bin {ct3} {clientchallenge} {lmresp}"
+        data['hash1'] = f"{ct1}:{srvchallenge}"
+        data['hash2'] = f"{ct2}:{srvchallenge}"
+
+    json_data = json.dumps(data)
+    if args.output:
+        with open(args.output, 'w') as json_file:
+            json.dump(data, json_file, indent=4)
+    else:
+        print(json_data)
+import hashlib
+import binascii
+import argparse
+import json
+import time
+import os
+
+def calc_md5_challenge(client_challenge, lm_resp):
+    combined_challenge = client_challenge + lm_resp[0:16]
+    m = hashlib.md5()
+    m.update(binascii.unhexlify(combined_challenge))
+    return m.hexdigest()
+
+parser = argparse.ArgumentParser()
+parser.add_argument('--ntlmv1', help='NTLMv1 Hash in responder format', required=True)
+parser.add_argument('--hashcat', help='hashcat path, eg: ~/git/hashcat', required=False)
+parser.add_argument('--hcutils', help='hashcat-utils path, eg: ~/git/hashcat-utils', required=False)
+parser.add_argument('--json', help='if this is set to anything it will output json, eg: --json 1', required=False)
+parser.add_argument('--output', help='output to a file, specify filename', required=False)
+args = parser.parse_args()
+
+# Splitting the NTLMv1 hash field
+hashsplit = args.ntlmv1.split(':')
+challenge = hashsplit[5]
+lmresp = hashsplit[3]
+ntresp = hashsplit[4]
+ct3 = ntresp[32:48]
+data = {
+    'ntlmv1': args.ntlmv1,
+    'user': hashsplit[0],
+    'domain': hashsplit[2],
+    'challenge': challenge,
+    'lmresp': lmresp,
+    'ntresp': ntresp,
+    'ct3': ct3
+}
+
+# Processing for different LM Response Conditions
+if lmresp[20:48] != "0000000000000000000000000000":
+    ct1 = ntresp[0:16]
+    ct2 = ntresp[16:32]
+    ct3 = ntresp[32:48]
+    output_data = {
+        'hostname': hashsplit[2],
+        'username': hashsplit[0],
+        'challenge': challenge,
+        'lm_response': lmresp,
+        'nt_response': ntresp,
+        'ct1': ct1,
+        'ct2': ct2,
+        'ct3': ct3
+    }
+
+    if args.json is None:
+        print("Hash Split Data: ", str(hashsplit))
+        print("Hostname: ", hashsplit[2])
+        print("Username: ", hashsplit[0])
+        print("Challenge: ", challenge)
+        print("LM Response: ", lmresp)
+        print("NT Response: ", ntresp)
+        print("CT1: ", ct1)
+        print("CT2: ", ct2)
+        print("CT3: ", ct3)
+        print("To Calculate Final NTLM Hash:")
+        if args.hcutils:
+            print(f"{args.hcutils}/ct3_to_ntlm.bin {ct3} {challenge}")
+        else:
+            print(f"./ct3_to_ntlm.bin {ct3} {challenge}")
+        print("To crack with hashcat, use this file:")
+        print(f"echo \"{ct1}:{challenge}\" >> 14000.hash")
+        print(f"echo \"{ct2}:{challenge}\" >> 14000.hash")
+        print(f"hashcat -m 14000 -a 3 -1 {args.hashcat}/charsets/DES_full.charset --hex-charset 14000.hash ?1?1?1?1?1?1?1?1")
+
+if lmresp[20:48] == "0000000000000000000000000000":
+    clientchallenge = hashsplit[5]
+    md5hash = calc_md5_challenge(clientchallenge, lmresp)
+    srvchallenge = md5hash[0:16]
+    data['srvchallenge'] = srvchallenge
+    ct1 = ntresp[0:16]
+    ct2 = ntresp[16:32]
+
+    if args.json is None:
+        print(f"Hash response is ESS, consider using responder with --lm or --disable-ess with a static challenge of 1122334455667788")
+        print(f"Client Challenge: {clientchallenge}")
+        print(f"Combined Challenge: {clientchallenge + lmresp[0:16]}")
+        print(f"MD5 Hash of Combined Challenge: {md5hash}")
+        print(f"Server Challenge: {srvchallenge}")
+        print("To calculate final NTLM hash use:")
+        if args.hcutils:
+            print(f"{args.hcutils}/ct3_to_ntlm.bin {ct3} {clientchallenge} {lmresp}")
+        else:
+            print(f"./ct3_to_ntlm.bin {ct3} {clientchallenge} {lmresp}")
+        print("To crack with hashcat, use this file:")
+        print(f"echo \"{ct1}:{srvchallenge}\" >> 14000.hash")
+        print(f"echo \"{ct2}:{srvchallenge}\" >> 14000.hash")
+        print(f"hashcat -m 14000 -a 3 -1 {args.hashcat}/charsets/DES_full.charset --hex-charset 14000.hash ?1?1?1?1?1?1?1?1")
+
+if args.json is not None:
+    if lmresp[20:48] != "0000000000000000000000000000":
+        if args.hcutils:
+            data['ct3_crack'] = f"{args.hcutils}/ct3_to_ntlm.bin {ct3} {challenge}"
+        else:
+            data['ct3_crack'] = f"ct3_to_ntlm.bin {ct3} {challenge}"
+        data['hash1'] = f"{ct1}:{challenge}"
+        data['hash2'] = f"{ct2}:{challenge}"
+
+    if lmresp[20:48] == "0000000000000000000000000000":
+        if args.hcutils:
+            data['ct3_crack'] = f"{args.hcutils}/ct3_to_ntlm.bin {ct3} {clientchallenge} {lmresp}"
+        else:
+            data['ct3_crack'] = f"ct3_to_ntlm.bin {ct3} {clientchallenge} {lmresp}"
+        data['hash1'] = f"{ct1}:{srvchallenge}"
+        data['hash2'] = f"{ct2}:{srvchallenge}"
+
+    json_data = json.dumps(data)
+    if args.output:
+        with open(args.output, 'w') as json_file:
+            json.dump(data, json_file, indent=4)
+    else:
+        print(json_data)
+import hashlib
+import binascii
+import argparse
+import json
+import time
+import os
+
+def calc_md5_challenge(client_challenge, lm_resp):
+    combined_challenge = client_challenge + lm_resp[0:16]
+    m = hashlib.md5()
+    m.update(binascii.unhexlify(combined_challenge))
+    return m.hexdigest()
+
+parser = argparse.ArgumentParser()
+parser.add_argument('--ntlmv1', help='NTLMv1 Hash in responder format', required=True)
+parser.add_argument('--hashcat', help='hashcat path, eg: ~/git/hashcat', required=False)
+parser.add_argument('--hcutils', help='hashcat-utils path, eg: ~/git/hashcat-utils', required=False)
+parser.add_argument('--json', help='if this is set to anything it will output json, eg: --json 1', required=False)
+parser.add_argument('--output', help='output to a file, specify filename', required=False)
+args = parser.parse_args()
+
+# Splitting the NTLMv1 hash field
+hashsplit = args.ntlmv1.split(':')
+challenge = hashsplit[5]
+lmresp = hashsplit[3]
+ntresp = hashsplit[4]
+ct3 = ntresp[32:48]
+data = {
+    'ntlmv1': args.ntlmv1,
+    'user': hashsplit[0],
+    'domain': hashsplit[2],
+    'challenge': challenge,
+    'lmresp': lmresp,
+    'ntresp': ntresp,
+    'ct3': ct3
+}
+
+# Processing for different LM Response Conditions
+if lmresp[20:48] != "0000000000000000000000000000":
+    ct1 = ntresp[0:16]
+    ct2 = ntresp[16:32]
+    ct3 = ntresp[32:48]
+    output_data = {
+        'hostname': hashsplit[2],
+        'username': hashsplit[0],
+        'challenge': challenge,
+        'lm_response': lmresp,
+        'nt_response': ntresp,
+        'ct1': ct1,
+        'ct2': ct2,
+        'ct3': ct3
+    }
+
+    if args.json is None:
+        print("Hash Split Data: ", str(hashsplit))
+        print("Hostname: ", hashsplit[2])
+        print("Username: ", hashsplit[0])
+        print("Challenge: ", challenge)
+        print("LM Response: ", lmresp)
+        print("NT Response: ", ntresp)
+        print("CT1: ", ct1)
+        print("CT2: ", ct2)
+        print("CT3: ", ct3)
+        print("To Calculate Final NTLM Hash:")
+        if args.hcutils:
+            print(f"{args.hcutils}/ct3_to_ntlm.bin {ct3} {challenge}")
+        else:
+            print(f"./ct3_to_ntlm.bin {ct3} {challenge}")
+        print("To crack with hashcat, use this file:")
+        print(f"echo \"{ct1}:{challenge}\" >> 14000.hash")
+        print(f"echo \"{ct2}:{challenge}\" >> 14000.hash")
+        print(f"hashcat -m 14000 -a 3 -1 {args.hashcat}/charsets/DES_full.charset --hex-charset 14000.hash ?1?1?1?1?1?1?1?1")
+
+if lmresp[20:48] == "0000000000000000000000000000":
+    clientchallenge = hashsplit[5]
+    md5hash = calc_md5_challenge(clientchallenge, lmresp)
+    srvchallenge = md5hash[0:16]
+    data['srvchallenge'] = srvchallenge
+    ct1 = ntresp[0:16]
+    ct2 = ntresp[16:32]
+
+    if args.json is None:
+        print(f"Hash response is ESS, consider using responder with --lm or --disable-ess with a static challenge of 1122334455667788")
+        print(f"Client Challenge: {clientchallenge}")
+        print(f"Combined Challenge: {clientchallenge + lmresp[0:16]}")
+        print(f"MD5 Hash of Combined Challenge: {md5hash}")
+        print(f"Server Challenge: {srvchallenge}")
+        print("To calculate final NTLM hash use:")
+        if args.hcutils:
+            print(f"{args.hcutils}/ct3_to_ntlm.bin {ct3} {clientchallenge} {lmresp}")
+        else:
+            print(f"./ct3_to_ntlm.bin {ct3} {clientchallenge} {lmresp}")
+        print("To crack with hashcat, use this file:")
+        print(f"echo \"{ct1}:{srvchallenge}\" >> 14000.hash")
+        print(f"echo \"{ct2}:{srvchallenge}\" >> 14000.hash")
+        print(f"hashcat -m 14000 -a 3 -1 {args.hashcat}/charsets/DES_full.charset --hex-charset 14000.hash ?1?1?1?1?1?1?1?1")
+
+if args.json is not None:
+    if lmresp[20:48] != "0000000000000000000000000000":
+        if args.hcutils:
+            data['ct3_crack'] = f"{args.hcutils}/ct3_to_ntlm.bin {ct3} {challenge}"
+        else:
+            data['ct3_crack'] = f"ct3_to_ntlm.bin {ct3} {challenge}"
+        data['hash1'] = f"{ct1}:{challenge}"
+        data['hash2'] = f"{ct2}:{challenge}"
+
+    if lmresp[20:48] == "0000000000000000000000000000":
+        if args.hcutils:
+            data['ct3_crack'] = f"{args.hcutils}/ct3_to_ntlm.bin {ct3} {clientchallenge} {lmresp}"
+        else:
+            data['ct3_crack'] = f"ct3_to_ntlm.bin {ct3} {clientchallenge} {lmresp}"
+        data['hash1'] = f"{ct1}:{srvchallenge}"
+        data['hash2'] = f"{ct2}:{srvchallenge}"
+
+    json_data = json.dumps(data)
+    if args.output:
+        with open(args.output, 'w') as json_file:
+            json.dump(data, json_file, indent=4)
+    else:
+        print(json_data)
